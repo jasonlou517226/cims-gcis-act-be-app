@@ -8,6 +8,8 @@ import com.microsoft.playwright.Playwright;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 
+import java.util.List;
+
 /**
  * Base class for all Playwright based tests.
  * Manages Playwright / Browser / Context / Page lifecycle.
@@ -28,13 +30,22 @@ public abstract class TestBase {
         return "true".equalsIgnoreCase(System.getProperty("slowmo", "false"));
     }
 
+    /** How long each action pauses in slowmo mode (ms). Default 2000 = 2s per action. */
+    protected static int slowMoMillis() {
+        return Integer.getInteger("slowmo.ms", 2_000);
+    }
+
     @BeforeEach
     public void setUp() {
         playwright = Playwright.create();
         BrowserType.LaunchOptions options = new BrowserType.LaunchOptions()
                 .setHeadless(isHeadless());
         if (isSlowMo()) {
-            options.setSlowMo(500);
+            options.setSlowMo(slowMoMillis());
+        }
+        if (!isHeadless()) {
+            // Watch mode: open the browser window in full screen for easy viewing.
+            options.setArgs(List.of("--start-fullscreen"));
         }
         browser = playwright.chromium().launch(options);
         // The portal is an older government site; ignore HTTPS errors to be safe.

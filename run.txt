@@ -1,0 +1,21 @@
+已建立並驗證 `run.sh` 一鍵執行腳本，並更新 README。
+
+## run.sh 功能
+
+```bash
+./run.sh                     # 執行全部測試（LoginTest + OnlineBookingLoginTest）
+./run.sh booking             # 只執行 OnlineBookingLoginTest（即 OnlineBookingLoginPage 所在流程）
+./run.sh portal              # 只執行 LoginTest（School Portal）
+./run.sh install             # 安裝 Playwright Chromium（首次執行前做一次）
+./run.sh booking -H -S       # 有頭模式 + 慢速播放，肉眼看瀏覽器操作
+./run.sh booking#方法名稱     # 只執行單一測試方法，例如 booking#spaLoginPageLoadsSuccessfully
+./run.sh -h                  # 顯示說明
+```
+
+## 特點
+- **自動偵測 Maven**：優先用系統 `mvn`，找不到則自動改用 IntelliJ 內建 Maven（`/Applications/IntelliJ IDEA.app/.../maven3/bin/mvn`），無需手動輸入完整路徑
+- 已設定可執行權限（`chmod +x`）
+- 實際驗證：`./run.sh booking` 執行成功，OnlineBookingLoginTest **5/5 全部通過**（BUILD SUCCESS）
+- README 已加入 `run.sh` 使用說明（「快速開始 → 0. 最簡單的方式」）
+
+現在在 terminal 只需一行 `./run.sh booking` 即可在本地啟動 Online Booking 測試。
