@@ -1,0 +1,41 @@
+# AWS CodeBuild build specification for dhci2_auto_check
+#
+# Prerequisites:
+#   - CodeBuild project with:
+#       * Source: this GitHub repository
+#       * Environment: Amazon Linux / Ubuntu, Docker (privileged-mode: true)
+#       * Service role with S3 write permissions (for artifacts)
+#       * Environment variables: OB_LOGIN / OB_PASSWORD (Online Booking test account)
+#       * Artifacts: S3 bucket for test reports
+version: 0.2
+
+env:
+  variables:
+    IMAGE_TAG: "dhci2-auto-check:codebuild"
+
+phases:
+  install:
+    commands:
+      - echo "[$(date +%FT%T%z)] Nothing to install - build & tests run inside the Docker image."
+
+  pre_build:
+    commands:
+      - echo "[$(date +%FT%T%z)] Building Docker image (Playwright Chromium + Tesseract baked in)..."
+      - docker build -t "$IMAGE_TAG" .
+
+  build:
+    commands:
+      - echo "[$(date +%FT%T%z)] Running ALL tests inside the container..."
+      - mkdir -p reports/surefire
+      # Mount the Surefire report directory so XML/HTML reports survive container removal.
+      - docker run --rm -e OB_LOGIN -e OB_PASSWORD -v "${CODEBUILD_SRC_DIR}/reports/surefire:/work/target/surefire-reports" "$IMAGE_TAG" all | tee reports/container-run.log
+
+  post_build:
+    commands:
+      - echo "[$(date +%FT%T%z)] Done. Reports are exported under reports/."
+
+artifacts:
+  base-directory: reports
+  files:
+    - '**/*'
+  discard-paths: no

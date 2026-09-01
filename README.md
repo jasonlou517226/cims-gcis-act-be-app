@@ -57,7 +57,9 @@ dhci2_auto_check/
 ./run.sh booking             # spaLoginPageLoadsSuccessfully（1 次）+ OCR 破解 captcha 全自動登入
 ./run.sh booking-all         # 執行 OnlineBookingLoginTest 全部 5 個測試方法 + OCR 全自動登入
 ./run.sh ocr                 # 只執行 OCR 破解 captcha 全自動登入（OnlineBookingOcrLoginTest）
-./run.sh portal              # 執行 LoginTest（School Portal）
+./run.sh portal              # 執行 LoginTest（School Portal）— 預設即有頭（全螢幕）+ 慢速（每步 2 秒）
+./run.sh portal -NH          # portal 以無頭模式執行（關閉有頭預設）
+./run.sh portal -NS          # portal 以正常速度執行（關閉慢速預設）
 ./run.sh all                 # 執行全部測試類（LoginTest + OnlineBookingLoginTest + OnlineBookingOcrLoginTest）
 ./run.sh install             # 安裝 Playwright Chromium 瀏覽器（首次執行前需做一次）
 ./run.sh booking -H -S       # 全螢幕 + 慢速（每步 2 秒）觀察頁面檢查 + OCR 全自動登入（試 5 次）
@@ -115,7 +117,7 @@ mvn test -Dheaded=true -Dslowmo=true -Dtest=LoginTest#loginWithValidCredentials
 | --- | --- |
 | `loginPageLoadsSuccessfully` | 登入頁可正常載入，表單元素（帳號/密碼/Submit）皆顯示 |
 | `loginWithValidCredentials` | 使用正確帳密登入，應導向 `SchoolPortalTrust/post_login_Action.action`（Login Success 頁面） |
-| `loginWithInvalidCredentials` | 使用錯誤密碼登入，應停留在登入頁或顯示錯誤訊息 |
+| `loginWithInvalidCredentials` | 使用錯誤密碼登入，應停留在登入頁或顯示錯誤訊息（若頁面中途被關閉／自行關閉，測試具容錯不誤判） |
 | `clearButtonEmptiesFields` | 點擊 Clear 按鈕應清空帳號與密碼欄位 |
 
 ### OnlineBookingLoginTest（Online Booking SPA）

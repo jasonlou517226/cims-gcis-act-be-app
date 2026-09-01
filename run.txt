@@ -19,3 +19,32 @@
 - README 已加入 `run.sh` 使用說明（「快速開始 → 0. 最簡單的方式」）
 
 現在在 terminal 只需一行 `./run.sh booking` 即可在本地啟動 Online Booking 測試。
+
+
+
+
+## OCR 驗證碼破解修正完成，全自動登入一次成功 ✅
+
+`./run.sh booking` 驗證結果：**attempt 1 即成功** — OCR 讀出 `XFTX`，後端回 `respCode=0` 併發 JWT token，SPA 導向 `#/FHS-CH`，BUILD SUCCESS（2 個測試全過）。
+
+### 本輪修改
+1. **`tools/captcha-ocr.swift`**（OCR 核心改良）
+   - **保留大小寫**：後端 captcha 比對是大小寫敏感的，先前一律轉大寫是連續 113 失敗的系統性原因（唯一成功案例恰為全大寫 `DW74`）。
+   - **Cyrillic 同形字轉換**：Vision 偶爾把字元讀成俄文（如 `стим`），新增 `latinize()` 把 А→A、м→m 等映射回 Latin。
+   - **共識投票 `pickBest()`**：從 8 個變體（1x–4x × accurate/fast）中，取「最多變體一致同意」的 4 字元候選（離線測試可見 `2644 x3/4`、`H79K x3/4` 的高信心輸出）。
+2. **`CaptchaOcr.java`**：`solveClean()` 不再 `toUpperCase()`，交由 Swift 端處理大小寫。
+3. **`OnlineBookingOcrLoginTest.java`**：OCR 嘗試預算 1 → 5（`-Dob.attempts=N` 可調）。
+
+### 現在的 OCR 管線
+`captcha base64 (網路層截取) → Vision 多尺度辨識 × Cyrillic 正規化 → 共識投票 → 保留大小寫提交 → 113 時 SPA 自動換圖重試（最多 5 次）`
+
+### 執行方式
+```bash
+./run.sh booking          # 頁面檢查 + OCR 全自動登入（預設試 5 次）
+./run.sh booking -H -S    # 全螢幕 + 每步 2 秒慢速觀察
+OB_ATTEMPTS=10 ./run.sh ocr   # 提高重試上限
+```
+
+
+
+macOS Vision framework（tools/captcha-ocr.swift）

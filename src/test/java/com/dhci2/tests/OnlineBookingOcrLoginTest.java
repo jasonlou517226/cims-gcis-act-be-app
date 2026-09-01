@@ -13,15 +13,25 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Full automated login against the Online Booking SPA.
  *
- * The captcha is solved with macOS Vision OCR (see {@link com.dhci2.support.CaptchaOcr}).
- * By default up to 5 captcha attempts are made; set -Dob.attempts=N to change
- * the budget when OCR misreads (it is case-sensitive & noisy).
+ * The captcha is solved with OCR (macOS Vision or tesseract — see
+ * {@link com.dhci2.support.CaptchaOcr}). By default up to 5 captcha attempts
+ * are made; set -Dob.attempts=N to change the budget when OCR misreads
+ * (it is case-sensitive & noisy).
  *
- * Credentials come from system properties (never hard-code secrets):
- *   -Dob.login=...  -Dob.password=...
+ * Credentials come from system properties or environment variables
+ * (never hard-code secrets):
+ *   -Dob.login=...  -Dob.password=...   or   OB_LOGIN / OB_PASSWORD env vars
  * When credentials are absent the test is skipped.
  */
 class OnlineBookingOcrLoginTest extends TestBase {
+
+    /** First non-blank value, or null when all are blank (env-var friendly). */
+    private static String firstNonBlank(String a, String b) {
+        if (a != null && !a.isBlank()) {
+            return a;
+        }
+        return (b != null && !b.isBlank()) ? b : null;
+    }
 
     private OnlineBookingLoginPage loginPage;
 
@@ -36,10 +46,10 @@ class OnlineBookingOcrLoginTest extends TestBase {
     @DisplayName("OCR-solved captcha lets a valid user log in")
     @Timeout(value = 300)
     void loginWithOcrCaptcha() throws InterruptedException {
-        String login = System.getProperty("ob.login");
-        String password = System.getProperty("ob.password");
+        String login = firstNonBlank(System.getProperty("ob.login"), System.getenv("OB_LOGIN"));
+        String password = firstNonBlank(System.getProperty("ob.password"), System.getenv("OB_PASSWORD"));
         Assumptions.assumeTrue(login != null && password != null,
-                "Set -Dob.login and -Dob.password to run this test");
+                "Set -Dob.login/-Dob.password or OB_LOGIN/OB_PASSWORD env vars to run this test");
 
         loginPage.open();
         loginPage.fillUsername(login);
@@ -63,7 +73,8 @@ class OnlineBookingOcrLoginTest extends TestBase {
                 continue;
             }
             lastCaptcha = answer;
-            System.out.println("attempt " + attempt + ": OCR answer = " + answer);
+            System.out.println("attempt " + attempt + ": OCR answer = " + answer
+                    + " (engine: " + com.dhci2.support.CaptchaOcr.activeBackend() + ")");
             // Re-fill credentials every time: the SPA clears the form after a
             // failed login, and client-side validation would silently block
             // the submit if a required field became empty.

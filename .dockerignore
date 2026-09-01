@@ -1,0 +1,18 @@
+# Keep the build context lean — everything below is rebuilt inside the image.
+target/
+.idea/
+*.iml
+.git/
+.gitignore
+.DS_Store
+
+# Local tooling not needed in the image
+# (docker-entrypoint.sh is NOT ignored — the Dockerfile COPYs it)
+run.sh
+README.md
+Dockerfile
+buildspec.yml
+
+# Playwright artifacts downloaded on the host (image installs its own)
+playwright-report/
+test-results/

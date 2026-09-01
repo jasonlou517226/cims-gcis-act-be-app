@@ -22,8 +22,14 @@
 # 旗標（可與上述任一目標合併使用）:
 #   -H, --headed                 有頭模式（瀏覽器以全螢幕開啟，方便觀察）
 #   -S, --slowmo                 每個操作停留 2 秒，方便肉眼觀察
+#   -NH, --no-headed             強制關閉有頭模式（portal 預設開啟時用）
+#   -NS, --no-slowmo             強制關閉慢速模式（portal 預設開啟時用）
+#
+# 注意：portal 目標「預設」即有頭 + 慢速（每步 2 秒），方便肉眼觀察頁面檢查
 #
 # 範例:
+#   ./run.sh portal              # School Portal 測試（預設有頭 + 慢速觀察）
+#   ./run.sh portal -NH -NS      # School Portal 測試（無頭 + 正常速度）
 #   ./run.sh booking -H -S       # 全螢幕 + 慢速（每步 2 秒）觀察頁面檢查 + OCR 全自動登入（試 5 次）
 #
 set -euo pipefail
@@ -43,22 +49,34 @@ echo "🛠  使用 Maven: $MVN"
 
 # ---------- 解析參數 ----------
 TARGET="booking"
-HEADED="false"
-SLOWMO="false"
+HEADED=""
+SLOWMO=""
 
 usage() {
-    sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -H|--headed)  HEADED="true";  shift ;;
-        -S|--slowmo)  SLOWMO="true";  shift ;;
-        -h|--help)    usage ;;
+        -H|--headed)     HEADED="true";   shift ;;
+        -S|--slowmo)     SLOWMO="true";   shift ;;
+        -NH|--no-headed) HEADED="false";  shift ;;
+        -NS|--no-slowmo) SLOWMO="false";  shift ;;
+        -h|--help)       usage ;;
         *)            TARGET="$1";    shift ;;
     esac
 done
+
+# portal 目標預設「有頭 + 慢速（每步 2 秒）」方便肉眼觀察頁面檢查；可用 -NH / -NS 關閉
+if [[ "$TARGET" == portal* ]]; then
+    HEADED="${HEADED:-true}"
+    SLOWMO="${SLOWMO:-true}"
+fi
+HEADED="${HEADED:-false}"
+SLOWMO="${SLOWMO:-false}"
+if [[ "$HEADED" == true ]]; then echo "🖥  有頭模式（全螢幕）"; fi
+if [[ "$SLOWMO" == true ]]; then echo "🐢 慢速模式（每步 2 秒）"; fi
 
 OPTS=(-Dheaded="$HEADED" -Dslowmo="$SLOWMO")
 DEFAULT_OB_LOGIN='2175091750'
