@@ -29,7 +29,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class OnlineBookingLoginPage {
 
-    public static final String BASE_URL = "https://www.clinical.dh.gov.hk/OnlineBookingWeb/";
+    public static final String BASE_URL = "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/";
     public static final String URL = BASE_URL + "#/FHS-CH/login";
 
     /** Backend APIs used by the SPA (relative to /OnlineBookingWeb). */

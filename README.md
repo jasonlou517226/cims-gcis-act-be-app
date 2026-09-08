@@ -19,14 +19,15 @@
 | 登入頁網址 | https://www.clinical.dh.gov.hk/OnlineBookingWeb/#/FHS-CH/login |
 | 測試重點 | SPA 可載入渲染、後端 API（`siteParams/map`、`generateCaptcha/image`）健康檢查、錯誤 captcha 被正常拒絕、**OCR 全自動登入** |
 
-> Online Booking 登入需要圖形驗證碼（CAPTCHA）。除健康檢查外，本專案另提供 `OnlineBookingOcrLoginTest`：攔截 captcha 圖片後以 **macOS Vision OCR**（`tools/captcha-ocr.swift`）辨識，自動填入並完成真實登入；OCR 失敗時自動換圖重試（`OB_ATTEMPTS` 環境變數控制，預設 5 次）。
+> Online Booking 登入需要圖形驗證碼（CAPTCHA）。除健康檢查外，本專案另提供 `OnlineBookingOcrLoginTest`：攔截 captcha 圖片後以 **OCR**（macOS 用 Vision framework、Windows/Linux 用 Tesseract，依平台自動選擇）辨識，自動填入並完成真實登入；OCR 失敗時自動換圖重試（`OB_ATTEMPTS` 環境變數控制，預設 5 次）。
 
 ## 專案結構
 
 ```
 dhci2_auto_check/
 ├── pom.xml                                     # Maven 設定（Playwright、JUnit 5）
-├── run.sh                                      # 一鍵執行腳本（自動偵測 Maven）
+├── run.sh                                      # 一鍵執行腳本（macOS/Linux，自動偵測 Maven）
+├── run.ps1                                     # 一鍵執行腳本（Windows PowerShell，自動偵測 Maven/JDK/Tesseract）
 ├── tools/
 │   └── captcha-ocr.swift                       # macOS Vision OCR CLI（swiftc 編譯）
 └── src/test/java/com/dhci2/
@@ -44,9 +45,35 @@ dhci2_auto_check/
 
 ## 環境需求
 
-- JDK 17 以上（本專案以 Java 24 驗證）
+- JDK 17 以上（Windows 可直接使用 IntelliJ IDEA 內建 JBR 21，免另外安裝）
 - Maven 3.6+（若無 Maven，IntelliJ IDEA 內建 Maven 亦可）
-- OCR 測試需 macOS（Vision framework）+ Xcode command line tools（`swiftc`）
+- OCR 後端（依平台自動偵測，可用 `-Docr.engine=vision|tesseract` 覆寫）：
+  - macOS → Vision framework（需 Xcode command line tools / `swiftc`）
+  - Windows / Linux → Tesseract OCR CLI（`tesseract` 需在 PATH 上）
+
+## Windows 11 本機設置（一次性）
+
+1. **JDK / Maven**：可不另外安裝 — `run.ps1` 會自動偵測 IntelliJ IDEA 內建 Maven 與 JBR 21；若要獨立安裝可執行 `winget install EclipseAdoptium.Temurin.21.JDK` 與 `winget install Apache.Maven`。
+2. **公司 Artifactory SSL 憑證**（`~\.m2\settings.xml` 指向 `https://artifactrepo:55743`，Java 預設不信任企業 CA，需匯入 truststore）：
+
+   ```powershell
+   $jbr = (Get-ChildItem 'C:\Program Files\JetBrains\IntelliJ IDEA*\jbr' | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+   $kt  = "$jbr\bin\keytool.exe"
+   & $kt -printcert -sslserver artifactrepo:55743 -rfc | Out-File "$env:USERPROFILE\.m2\artifactory-chain.pem" -Encoding ascii
+   Copy-Item "$jbr\lib\security\cacerts" "$env:USERPROFILE\.m2\truststore.jks" -Force
+   $raw = Get-Content "$env:USERPROFILE\.m2\artifactory-chain.pem" -Raw
+   $i = 0
+   [regex]::Matches($raw, '-----BEGIN CERTIFICATE-----.+?-----END CERTIFICATE-----', 'Singleline') | ForEach-Object {
+       $i++
+       $f = "$env:USERPROFILE\.m2\artifactory-cert-$i.pem"
+       $_.Value | Out-File $f -Encoding ascii
+       & $kt -importcert -noprompt -alias "artifactory-$i" -file $f -keystore "$env:USERPROFILE\.m2\truststore.jks" -storepass changeit
+   }
+   ```
+
+   之後 `run.ps1` 偵測到 `~\.m2\truststore.jks` 會自動透過 `MAVEN_OPTS` 套用（亦適用其他 JDK 的 `lib\security\cacerts` 來源）。
+3. **Tesseract（Windows OCR 後端）**：`winget install -e --id UB-Mannheim.TesseractOCR`（安裝於 `C:\Program Files\Tesseract-OCR`；`run.ps1` 會自動加入當前 session 的 PATH）。
+4. **Playwright 瀏覽器**：`.\run.ps1 install`（首次執行測試前需做一次）。
 
 ## 快速開始
 
@@ -65,6 +92,19 @@ dhci2_auto_check/
 ./run.sh booking -H -S       # 全螢幕 + 慢速（每步 2 秒）觀察頁面檢查 + OCR 全自動登入（試 5 次）
 ./run.sh booking#loginFormReflectsInput        # 執行指定單一測試方法
 ./run.sh -h                  # 顯示完整說明
+```
+
+### 0-1. Windows：使用 `run.ps1`（PowerShell 對應腳本）
+
+```powershell
+.\run.ps1                     # 預設 = booking（頁面載入檢查 1 次 + OCR 全自動登入）
+.\run.ps1 booking-all         # OnlineBookingLoginTest 全部 5 個方法 + OCR 全自動登入
+.\run.ps1 ocr                 # 只執行 OCR 全自動登入（Windows 用 Tesseract）
+.\run.ps1 portal              # LoginTest（預設有頭 + 慢速，方便觀察）
+.\run.ps1 portal -NH -NS      # LoginTest（無頭 + 正常速度）
+.\run.ps1 booking -H -S       # 全螢幕 + 慢速觀察
+.\run.ps1 'booking#loginFormReflectsInput'   # 單一測試方法（# 在 PowerShell 需加引號）
+.\run.ps1 install             # 安裝 Playwright Chromium 瀏覽器（首次執行前需做一次）
 ```
 
 OCR 測試帳密（擇一）：
@@ -149,4 +189,4 @@ mvn test -Dtest=OnlineBookingOcrLoginTest -Dob.login=你的帳號 -Dob.password=
 - 若同一帳號已在其他裝置登入，網站會彈出「There is another active session for the same User Name」對話框，測試會自動點擊「I understood and wanted to proceed with logging in here」繼續登入。
 - 帳密目前寫在 `LoginTest.java` 中；若要上 CI，建議改用環境變數（`TEST_USERNAME` / `TEST_PASSWORD`）。
 - Online Booking SPA 為 React 應用（hash routing），測試需等待 React 渲染完成後才進行元素斷言；後端 API 檢查透過 `page.request()` 以瀏覽器 context 呼叫，藉此沿用網站的連線與憑證設定。
-- **OCR 測試僅支援 macOS**（依賴 Vision framework），首次使用需以 `swiftc tools/captcha-ocr.swift -o tools/captcha-ocr` 編譯；captcha 錯誤（respCode 113）不計入帳號鎖定計數，重試安全。
+- **OCR 後端**：macOS 使用 Vision framework（首次使用需以 `swiftc tools/captcha-ocr.swift -o tools/captcha-ocr` 編譯）；Windows/Linux 使用 Tesseract CLI（Windows 安裝：`winget install -e --id UB-Mannheim.TesseractOCR`）。`CaptchaOcr` 依平台自動選擇（可用 `-Docr.engine=vision|tesseract` 覆寫）。captcha 錯誤（respCode 113）不計入帳號鎖定計數，重試安全。

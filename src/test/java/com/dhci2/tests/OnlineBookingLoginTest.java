@@ -93,8 +93,8 @@ class OnlineBookingLoginTest extends TestBase {
     @Timeout(value = 120)
     void wrongCaptchaIsRejectedGracefully() {
         loginPage.open();
-        loginPage.fillUsername("2175091750");
-        loginPage.fillPassword("Gold1234{}KKK");
+        loginPage.fillUsername("1064984038");
+        loginPage.fillPassword("Gold1234{}7");
         loginPage.fillCaptcha("AAAA");
         loginPage.submit();
 
