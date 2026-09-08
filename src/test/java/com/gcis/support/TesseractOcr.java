@@ -1,4 +1,4 @@
-package com.dhci2.support;
+package com.gcis.support;
 
 import javax.imageio.ImageIO;
 import java.awt.Graphics2D;

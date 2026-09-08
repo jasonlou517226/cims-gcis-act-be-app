@@ -1,6 +1,6 @@
-package com.dhci2.tests;
+package com.gcis.tests;
 
-import com.dhci2.pages.OnlineBookingLoginPage;
+import com.gcis.pages.OnlineBookingLoginPage;
 import com.microsoft.playwright.APIResponse;
 import com.microsoft.playwright.Page;
 import org.junit.jupiter.api.DisplayName;

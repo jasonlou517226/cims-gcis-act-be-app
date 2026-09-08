@@ -1,4 +1,4 @@
-package com.dhci2.tests;
+package com.gcis.tests;
 
 import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.BrowserContext;

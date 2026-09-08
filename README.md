@@ -30,7 +30,7 @@ dhci2_auto_check/
 ├── run.ps1                                     # 一鍵執行腳本（Windows PowerShell，自動偵測 Maven/JDK/Tesseract）
 ├── tools/
 │   └── captcha-ocr.swift                       # macOS Vision OCR CLI（swiftc 編譯）
-└── src/test/java/com/dhci2/
+└── src/test/java/com/gcis/
     ├── pages/
     │   ├── LoginPage.java                      # School Portal 登入頁 Page Object
     │   └── OnlineBookingLoginPage.java         # Online Booking SPA 登入頁 Page Object（含 captcha 攔截）

@@ -1,4 +1,4 @@
-package com.dhci2.pages;
+package com.gcis.pages;
 
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;

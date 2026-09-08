@@ -1,4 +1,4 @@
-package com.dhci2.support;
+package com.gcis.support;
 
 /**
  * Facade that picks the best available OCR backend for the current platform:

@@ -1,6 +1,6 @@
-package com.dhci2.tests;
+package com.gcis.tests;
 
-import com.dhci2.pages.LoginPage;
+import com.gcis.pages.LoginPage;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.PlaywrightException;
 import org.junit.jupiter.api.DisplayName;

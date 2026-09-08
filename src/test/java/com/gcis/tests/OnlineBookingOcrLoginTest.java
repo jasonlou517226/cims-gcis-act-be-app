@@ -1,6 +1,6 @@
-package com.dhci2.tests;
+package com.gcis.tests;
 
-import com.dhci2.pages.OnlineBookingLoginPage;
+import com.gcis.pages.OnlineBookingLoginPage;
 import com.microsoft.playwright.PlaywrightException;
 import com.microsoft.playwright.Response;
 import org.junit.jupiter.api.Assumptions;
@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Full automated login against the Online Booking SPA.
  *
  * The captcha is solved with OCR (macOS Vision or tesseract — see
- * {@link com.dhci2.support.CaptchaOcr}). By default up to 5 captcha attempts
+ * {@link com.gcis.support.CaptchaOcr}). By default up to 5 captcha attempts
  * are made; set -Dob.attempts=N to change the budget when OCR misreads
  * (it is case-sensitive & noisy).
  *
@@ -74,7 +74,7 @@ class OnlineBookingOcrLoginTest extends TestBase {
             }
             lastCaptcha = answer;
             System.out.println("attempt " + attempt + ": OCR answer = " + answer
-                    + " (engine: " + com.dhci2.support.CaptchaOcr.activeBackend() + ")");
+                    + " (engine: " + com.gcis.support.CaptchaOcr.activeBackend() + ")");
             // Re-fill credentials every time: the SPA clears the form after a
             // failed login, and client-side validation would silently block
             // the submit if a required field became empty.

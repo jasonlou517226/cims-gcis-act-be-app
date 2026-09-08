@@ -1,6 +1,6 @@
-package com.dhci2.pages;
+package com.gcis.pages;
 
-import com.dhci2.support.CaptchaOcr;
+import com.gcis.support.CaptchaOcr;
 import com.microsoft.playwright.APIResponse;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;

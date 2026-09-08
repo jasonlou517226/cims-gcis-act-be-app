@@ -1,4 +1,4 @@
-package com.dhci2.support;
+package com.gcis.support;
 
 import java.io.IOException;
 import java.io.OutputStream;
