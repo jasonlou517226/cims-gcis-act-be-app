@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Health-check tests for the DH Online Booking SPA (React, hash routing).
  *
- * Target: https://www.clinical.dh.gov.hk/OnlineBookingWeb/#/FHS-CH/login
+ * Target: https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/FHS-CH/login
  *
  * Because the login flow requires a CAPTCHA whose answer exists only inside
  * the generated image, these tests focus on service availability:
@@ -118,11 +118,11 @@ class OnlineBookingLoginTest extends TestBase {
         loginPage.fillPassword("healthcheck-pass");
 
         assertAll(
-                () -> assertTrue(loginPage.page().locator("[data-testid=\"login_name\"] input, #login_name input")
-                        .first().inputValue().contains("healthcheck-user"),
+                () -> assertTrue(loginPage.page().locator("//*[@id=\"login_name\"]")
+                        .inputValue().contains("healthcheck-user"),
                         "Username input should hold the typed value"),
-                () -> assertTrue(loginPage.page().locator("[data-testid=\"login_password\"] input, #login_password input")
-                        .first().inputValue().contains("healthcheck-pass"),
+                () -> assertTrue(loginPage.page().locator("//*[@id=\"login_password\"]")
+                        .inputValue().contains("healthcheck-pass"),
                         "Password input should hold the typed value")
         );
     }

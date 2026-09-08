@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Page Object for the DH Online Booking SPA (React, hash routing).
  *
- * Target: https://www.clinical.dh.gov.hk/OnlineBookingWeb/#/FHS-CH/login
+ * Target: https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/FHS-CH/login
  *
  * Notes:
  * - The SPA is a React app served from a single index.html; real "pages" are
@@ -29,8 +29,10 @@ import java.util.concurrent.TimeUnit;
  */
 public class OnlineBookingLoginPage {
 
-    public static final String BASE_URL = "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/";
-    public static final String URL = BASE_URL + "#/FHS-CH/login";
+    public static final String URL = "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/FHS-CH/login";
+
+    /** Origin + context path of the SPA (URL without the hash route), used to build API endpoints. */
+    private static final String API_BASE = URL.substring(0, URL.indexOf('#'));
 
     /** Backend APIs used by the SPA (relative to /OnlineBookingWeb). */
     public static final String SITE_PARAMS_API = "/online-booking-user/siteParams/map";
@@ -63,11 +65,11 @@ public class OnlineBookingLoginPage {
 
     public OnlineBookingLoginPage(Page page) {
         this.page = page;
-        // data-testid attributes are stable hooks emitted by the SPA
-        this.usernameInput = page.locator("[data-testid=\"login_name\"] input, #login_name input").first();
-        this.passwordInput = page.locator("[data-testid=\"login_password\"] input, #login_password input").first();
-        this.captchaInput = page.locator("[data-testid=\"captchaInput\"] input, #captchaInput input").first();
-        this.loginButton = page.locator("#login_button, [data-testid=\"login_loginBtn\"]").first();
+        // ID-based XPath locators for the Online Booking SPA login form
+        this.usernameInput = page.locator("//*[@id=\"login_name\"]");
+        this.passwordInput = page.locator("//*[@id=\"login_password\"]");
+        this.captchaInput = page.locator("//*[@id=\"captchaInput\"]");
+        this.loginButton = page.locator("//*[@id=\"login_button\"]/span");
         this.reloadCaptchaButton = page.locator("#reloadImage").first();
 
         // The SPA renders the captcha as an <img> fed by an XHR response; the
@@ -253,7 +255,7 @@ public class OnlineBookingLoginPage {
      * is a good backend health signal.
      */
     public APIResponse fetchSiteParams() {
-        return page.request().get(BASE_URL + SITE_PARAMS_API.substring(1));
+        return page.request().get(API_BASE + SITE_PARAMS_API.substring(1));
     }
 
     /**
@@ -262,7 +264,7 @@ public class OnlineBookingLoginPage {
      * image and/or captcha key).
      */
     public APIResponse fetchCaptcha() {
-        return page.request().get(BASE_URL + CAPTCHA_API.substring(1));
+        return page.request().get(API_BASE + CAPTCHA_API.substring(1));
     }
 
     /** Convenience accessor for request/response debugging in tests. */
