@@ -2,13 +2,12 @@
 # run.ps1 - dhci2_auto_check one-click script (Windows PowerShell equivalent of run.sh)
 #
 # Usage:
-#   .\run.ps1                     # default = booking (page load check x1 + OCR auto login)
-#   .\run.ps1 booking             # spaLoginPageLoadsSuccessfully (x1) + OCR captcha auto login
-#   .\run.ps1 booking-all         # run OnlineBookingLoginTest all 5 methods + OCR auto login
+#   .\run.ps1                     # default = booking (OnlineBookingLoginPage smoke x1 + OCR auto login)
+#   .\run.ps1 booking             # OnlineBookingLoginPage standalone main() smoke (x1) + OCR captcha auto login
 #   .\run.ps1 ocr                 # run OnlineBookingOcrLoginTest only (OCR captcha auto login)
 #   .\run.ps1 portal              # run LoginTest (School Portal, 4 methods)
-#   .\run.ps1 all                 # run all test classes
-#   .\run.ps1 'booking#loginFormReflectsInput'   # run a single test method (quote the #)
+#   .\run.ps1 all                 # run all test classes (LoginTest + OnlineBookingOcrLoginTest)
+#   .\run.ps1 'portal#loginWithValidCredentials'  # run a single test method (quote the #)
 #   .\run.ps1 install             # install Playwright Chromium browser (run once before first test)
 #   .\run.ps1 -Help               # show this help
 #
@@ -43,7 +42,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 
 if ($Help) {
-    Get-Content -LiteralPath $PSCommandPath | Select-Object -Skip 1 -First 38 | ForEach-Object { $_ -replace '^# ?', '' }
+    Get-Content -LiteralPath $PSCommandPath | Select-Object -Skip 1 -First 29 | ForEach-Object { $_ -replace '^# ?', '' }
     exit 0
 }
 
@@ -126,7 +125,7 @@ $Opts = @("-Dheaded=$Headed", "-Dslowmo=$Slowmo")
 $Cred = @(
     "-Dob.login=$(if ($env:OB_LOGIN) { $env:OB_LOGIN } else { '1064984038' })",
     "-Dob.password=$(if ($env:OB_PASSWORD) { $env:OB_PASSWORD } else { 'Gold1234{}7' })",
-    "-Dob.attempts=$(if ($env:OB_ATTEMPTS) { $env:OB_ATTEMPTS } else { 5 })"
+    "-Dob.attempts=$(if ($env:OB_ATTEMPTS) { $env:OB_ATTEMPTS } else { 15 })"
 )
 
 # ---------- Run ----------
@@ -137,18 +136,17 @@ switch -Regex ($Target) {
         exit $LASTEXITCODE
     }
     '^all$' {
-        Write-Host 'Running all tests (3 test classes)...'
+        Write-Host 'Running all test classes (LoginTest + OnlineBookingOcrLoginTest)...'
         & $MVN -B test @Opts @Cred
         exit $LASTEXITCODE
     }
     '^booking$' {
-        Write-Host 'Running spaLoginPageLoadsSuccessfully (x1) + OCR auto login...'
-        & $MVN -B test @Opts @Cred '-Dtest=OnlineBookingLoginTest#spaLoginPageLoadsSuccessfully,OnlineBookingOcrLoginTest'
-        exit $LASTEXITCODE
-    }
-    '^booking-all$' {
-        Write-Host 'Running OnlineBookingLoginTest (5 methods) + OCR auto login...'
-        & $MVN -B test @Opts @Cred '-Dtest=OnlineBookingLoginTest,OnlineBookingOcrLoginTest'
+        Write-Host 'Running OnlineBookingLoginPage standalone smoke + OCR auto login...'
+        # 1) Direct local run of the page object's main() (no JUnit involved).
+        & $MVN -B test-compile exec:java @Opts '-Dexec.mainClass=com.gcis.pages.OnlineBookingLoginPage' '-Dexec.classpathScope=test'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        # 2) OCR captcha auto login.
+        & $MVN -B test @Opts @Cred '-Dtest=OnlineBookingOcrLoginTest'
         exit $LASTEXITCODE
     }
     '^portal$' {
@@ -161,15 +159,13 @@ switch -Regex ($Target) {
         & $MVN -B test @Opts @Cred '-Dtest=OnlineBookingOcrLoginTest'
         exit $LASTEXITCODE
     }
-    '^(booking|portal)#' {
-        $Class, $Method = $Target -split '#', 2
-        $TestClass = if ($Class -eq 'booking') { 'OnlineBookingLoginTest' } else { 'LoginTest' }
-        Write-Host "Running single test method: $TestClass#$Method"
-        & $MVN -B test @Opts "-Dtest=$TestClass#$Method"
+    '^portal#' {
+        Write-Host "Running single test method: $Target"
+        & $MVN -B test @Opts "-Dtest=$Target"
         exit $LASTEXITCODE
     }
     default {
-        Write-Error "Unknown target: $Target (available: all | booking | booking-all | portal | ocr | booking#method | portal#method | install)"
+        Write-Error "Unknown target: $Target (available: all | booking | portal | ocr | portal#method | install)"
         exit 1
     }
 }

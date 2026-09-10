@@ -33,13 +33,12 @@ dhci2_auto_check/
 └── src/test/java/com/gcis/
     ├── pages/
     │   ├── LoginPage.java                      # School Portal 登入頁 Page Object
-    │   └── OnlineBookingLoginPage.java         # Online Booking SPA 登入頁 Page Object（含 captcha 攔截）
+    │   └── OnlineBookingLoginPage.java         # Online Booking SPA 登入頁 Page Object（含 captcha 攔截；main() 可本機直跑冒煙檢查）
     ├── support/
     │   └── CaptchaOcr.java                     # 呼叫 macOS Vision OCR 的 captcha 辨識器
     └── tests/
         ├── TestBase.java                       # Playwright 生命週期管理（Base 類別）
         ├── LoginTest.java                      # School Portal 登入測試
-        ├── OnlineBookingLoginTest.java         # Online Booking SPA 健康檢查測試
         └── OnlineBookingOcrLoginTest.java      # OCR 破解 captcha 全自動登入測試
 ```
 
@@ -80,30 +79,27 @@ dhci2_auto_check/
 ### 0. 最簡單的方式：使用 `run.sh` 一鍵腳本（推薦）
 
 ```bash
-./run.sh                     # 預設 = booking（頁面載入檢查 1 次 + OCR 全自動登入）
-./run.sh booking             # spaLoginPageLoadsSuccessfully（1 次）+ OCR 破解 captcha 全自動登入
-./run.sh booking-all         # 執行 OnlineBookingLoginTest 全部 5 個測試方法 + OCR 全自動登入
+./run.sh                     # 預設 = booking（OnlineBookingLoginPage 冒煙檢查 1 次 + OCR 全自動登入）
+./run.sh booking             # OnlineBookingLoginPage.main() 本機直跑冒煙檢查 + OCR 破解 captcha 全自動登入
 ./run.sh ocr                 # 只執行 OCR 破解 captcha 全自動登入（OnlineBookingOcrLoginTest）
 ./run.sh portal              # 執行 LoginTest（School Portal）— 預設即有頭（全螢幕）+ 慢速（每步 2 秒）
 ./run.sh portal -NH          # portal 以無頭模式執行（關閉有頭預設）
 ./run.sh portal -NS          # portal 以正常速度執行（關閉慢速預設）
-./run.sh all                 # 執行全部測試類（LoginTest + OnlineBookingLoginTest + OnlineBookingOcrLoginTest）
+./run.sh all                 # 執行全部測試類（LoginTest + OnlineBookingOcrLoginTest）
 ./run.sh install             # 安裝 Playwright Chromium 瀏覽器（首次執行前需做一次）
 ./run.sh booking -H -S       # 全螢幕 + 慢速（每步 2 秒）觀察頁面檢查 + OCR 全自動登入（試 5 次）
-./run.sh booking#loginFormReflectsInput        # 執行指定單一測試方法
 ./run.sh -h                  # 顯示完整說明
 ```
 
 ### 0-1. Windows：使用 `run.ps1`（PowerShell 對應腳本）
 
 ```powershell
-.\run.ps1                     # 預設 = booking（頁面載入檢查 1 次 + OCR 全自動登入）
-.\run.ps1 booking-all         # OnlineBookingLoginTest 全部 5 個方法 + OCR 全自動登入
+.\run.ps1                     # 預設 = booking（OnlineBookingLoginPage 冒煙檢查 1 次 + OCR 全自動登入）
 .\run.ps1 ocr                 # 只執行 OCR 全自動登入（Windows 用 Tesseract）
 .\run.ps1 portal              # LoginTest（預設有頭 + 慢速，方便觀察）
 .\run.ps1 portal -NH -NS      # LoginTest（無頭 + 正常速度）
 .\run.ps1 booking -H -S       # 全螢幕 + 慢速觀察
-.\run.ps1 'booking#loginFormReflectsInput'   # 單一測試方法（# 在 PowerShell 需加引號）
+.\run.ps1 'portal#loginWithValidCredentials'   # 單一測試方法（# 在 PowerShell 需加引號）
 .\run.ps1 install             # 安裝 Playwright Chromium 瀏覽器（首次執行前需做一次）
 ```
 
@@ -160,21 +156,27 @@ mvn test -Dheaded=true -Dslowmo=true -Dtest=LoginTest#loginWithValidCredentials
 | `loginWithInvalidCredentials` | 使用錯誤密碼登入，應停留在登入頁或顯示錯誤訊息（若頁面中途被關閉／自行關閉，測試具容錯不誤判） |
 | `clearButtonEmptiesFields` | 點擊 Clear 按鈕應清空帳號與密碼欄位 |
 
-### OnlineBookingLoginTest（Online Booking SPA）
+### OnlineBookingLoginPage（Online Booking SPA — 本機直跑冒煙檢查）
 
-| 測試 | 說明 |
+Page Object 本身即可直接執行（不需 JUnit；原健康檢查測試類已退役）：
+
+```bash
+mvn test-compile exec:java -Dexec.mainClass=com.gcis.pages.OnlineBookingLoginPage -Dexec.classpathScope=test
+# 或在 IDE 中直接執行 OnlineBookingLoginPage 的 main()
+```
+
+| 檢查 | 說明 |
 | --- | --- |
-| `spaLoginPageLoadsSuccessfully` | SPA 登入路由可載入並渲染表單（帳號/密碼/captcha/登入按鈕） |
-| `siteParamsApiIsHealthy` | 後端 `siteParams/map` API 回傳 HTTP 200 與站點參數清單 |
-| `captchaApiIsHealthy` | 後端 `generateCaptcha/image` API 回傳 HTTP 200 與 base64 圖片 |
-| `wrongCaptchaIsRejectedGracefully` | 輸入錯誤 captcha 應顯示「Verification code is incorrect」且停留在登入頁 |
-| `loginFormReflectsInput` | 表單欄位可正常輸入並反映輸入值 |
+| SPA 登入路由載入 | 登入路由可載入並渲染表單（帳號/密碼/captcha/登入按鈕），且停留在 `#/FHS-CH/login` |
+| 表單反映輸入 | 帳號/密碼欄位可正常輸入並反映輸入值 |
+
+支援 `-Dheaded=true`（有頭全螢幕）、`-Dslowmo=true`、`-Dslowmo.ms=N` 旗標；全部檢查通過時進程結束碼為 0，失敗為 1。
 
 ### OnlineBookingOcrLoginTest（Online Booking SPA — 全自動登入）
 
 | 測試 | 說明 |
 | --- | --- |
-| `loginWithOcrCaptcha` | 攔截 `generateCaptcha/image` 回應 → 以 macOS Vision OCR 辨識（多變體放大 + 正規化取最佳候選）→ 自動填入並登入；captcha 遭拒（respCode 113）自動換圖重試，成功後應離開登入頁進入 `#/FHS-CH` |
+| `loginWithOcrCaptcha` | 攔截 `generateCaptcha/image` 回應 → 以 OCR 辨識（Vision / Tesseract 依平台自動選擇；皆為多變體 + 共識取最佳候選）→ 自動填入並登入；captcha 遭拒（respCode 113）自動換圖重試，成功後應離開登入頁進入 `#/FHS-CH` |
 
 執行方式（帳密未提供時測試會自動略過）：
 
@@ -189,4 +191,4 @@ mvn test -Dtest=OnlineBookingOcrLoginTest -Dob.login=你的帳號 -Dob.password=
 - 若同一帳號已在其他裝置登入，網站會彈出「There is another active session for the same User Name」對話框，測試會自動點擊「I understood and wanted to proceed with logging in here」繼續登入。
 - 帳密目前寫在 `LoginTest.java` 中；若要上 CI，建議改用環境變數（`TEST_USERNAME` / `TEST_PASSWORD`）。
 - Online Booking SPA 為 React 應用（hash routing），測試需等待 React 渲染完成後才進行元素斷言；後端 API 檢查透過 `page.request()` 以瀏覽器 context 呼叫，藉此沿用網站的連線與憑證設定。
-- **OCR 後端**：macOS 使用 Vision framework（首次使用需以 `swiftc tools/captcha-ocr.swift -o tools/captcha-ocr` 編譯）；Windows/Linux 使用 Tesseract CLI（Windows 安裝：`winget install -e --id UB-Mannheim.TesseractOCR`）。`CaptchaOcr` 依平台自動選擇（可用 `-Docr.engine=vision|tesseract` 覆寫）。captcha 錯誤（respCode 113）不計入帳號鎖定計數，重試安全。
+- **OCR 後端**：macOS 使用 Vision framework（首次使用需以 `swiftc tools/captcha-ocr.swift -o tools/captcha-ocr` 編譯）；Windows/Linux 使用 Tesseract CLI（Windows 安裝：`winget install -e --id UB-Mannheim.TesseractOCR`）。`CaptchaOcr` 依平台自動選擇（可用 `-Docr.engine=vision|tesseract` 覆寫）。Tesseract 走 captcha 實測調校：多變體預處理（放大 + 灰階 + Otsu 二值化/極性修正）× psm 8/13、英數白名單、關閉字典（隨機字串不可被「校正」成單字）、4 字候選共識投票。captcha 錯誤（respCode 113）不計入帳號鎖定計數，重試安全。

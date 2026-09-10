@@ -11,6 +11,7 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -20,9 +21,14 @@ import java.util.concurrent.TimeUnit;
  * with the {@code tesseract} CLI (Linux containers / CI).
  *
  * The raw captcha JPEG is pre-processed in pure Java (upscale + grayscale +
- * Otsu binarization) into several variants; each variant is piped to
- * {@code tesseract stdin stdout --psm 7} with an alphanumeric whitelist.
- * The first variant producing a 4-char alphanumeric answer wins (the captcha
+ * Otsu binarization, optionally polarity-corrected) into several variants;
+ * each variant is piped to {@code tesseract} with psm 8/13 (single word /
+ * raw line — measured to beat the line-oriented psm 7 on this distorted
+ * captcha), an alphanumeric whitelist and the dictionaries DISABLED
+ * (captcha text is random; the dictionary "corrects" it into real words).
+ * The answer is then picked by consensus among the readings with the ideal
+ * 4-char shape: most votes wins, ties go to the candidate backed by more
+ * distinct preprocessing variants, then to the earliest reading (the captcha
  * is case-sensitive, so case is preserved).
  *
  * Cyrillic homoglyphs occasionally appear in the captcha; they are mapped to
@@ -36,6 +42,13 @@ public final class TesseractOcr {
     /** Only these characters can appear in a captcha answer. */
     private static final String WHITELIST =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+    /**
+     * Page segmentation modes to query per variant. Measured on live samples:
+     * 8 (single word) and 13 (raw line, no layout analysis) both recover the
+     * 4 chars where the line-oriented 7 mostly returns nothing.
+     */
+    private static final int[] PSM_MODES = {8, 13};
 
     /** Cyrillic homoglyphs → visually identical Latin letters. */
     private static final Map<Character, Character> LATINIZE = Map.ofEntries(
@@ -86,20 +99,39 @@ public final class TesseractOcr {
             if (img == null) {
                 return null;
             }
-            String best = null;
+            String longest = null; // non-4-char fallback (caller retries)
+            Map<String, long[]> votes = new LinkedHashMap<>(); // candidate -> {count, variantBitmask}
+            int variantIdx = 0;
             for (byte[] variant : buildVariants(img)) {
-                String candidate = clean(runTesseract(variant));
-                if (candidate == null) {
-                    continue;
+                for (int psm : PSM_MODES) {
+                    String candidate = clean(runTesseract(variant, psm));
+                    if (candidate == null) {
+                        continue;
+                    }
+                    if (candidate.length() == 4) {
+                        long[] tally = votes.computeIfAbsent(candidate, k -> new long[2]);
+                        tally[0]++;
+                        tally[1] |= 1L << variantIdx;
+                    } else if (longest == null || candidate.length() > longest.length()) {
+                        longest = candidate;
+                    }
                 }
-                if (candidate.length() == 4) {
-                    return candidate; // exact-length answer wins immediately
-                }
-                if (best == null || candidate.length() > best.length()) {
-                    best = candidate;
+                variantIdx++;
+            }
+            // Consensus: most votes; ties → more distinct variants; → earliest.
+            String winner = null;
+            long winnerVotes = 0;
+            long winnerVariants = 0;
+            for (Map.Entry<String, long[]> e : votes.entrySet()) {
+                long count = e.getValue()[0];
+                long variants = Long.bitCount(e.getValue()[1]);
+                if (count > winnerVotes || (count == winnerVotes && variants > winnerVariants)) {
+                    winner = e.getKey();
+                    winnerVotes = count;
+                    winnerVariants = variants;
                 }
             }
-            return best;
+            return winner != null ? winner : longest;
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
@@ -108,11 +140,18 @@ public final class TesseractOcr {
         }
     }
 
-    /** Pipes a PNG payload to tesseract and returns its raw stdout. */
-    private static String runTesseract(byte[] png) throws IOException, InterruptedException {
+    /**
+     * Pipes a PNG payload to tesseract and returns its raw stdout. Captcha
+     * tuning: whitelisted alphabet, dictionaries off (random text), no
+     * auto-inversion (the Otsu variant handles polarity explicitly).
+     */
+    private static String runTesseract(byte[] png, int psm) throws IOException, InterruptedException {
         ProcessBuilder pb = new ProcessBuilder("tesseract", "stdin", "stdout",
-                "--dpi", "300", "--psm", "7",
-                "-c", "tessedit_char_whitelist=" + WHITELIST);
+                "--dpi", "300", "--psm", String.valueOf(psm),
+                "-c", "tessedit_char_whitelist=" + WHITELIST,
+                "-c", "load_system_dawg=0",
+                "-c", "load_freq_dawg=0",
+                "-c", "tessedit_do_invert=0");
         pb.redirectError(ProcessBuilder.Redirect.DISCARD);
         Process p = pb.start();
         try (OutputStream stdin = p.getOutputStream()) {
@@ -126,12 +165,14 @@ public final class TesseractOcr {
         return p.exitValue() == 0 ? out : null;
     }
 
-    /** Pre-processing variants, ordered cheapest → most aggressive. */
+    /** Pre-processing variants, strongest first (binarized reads best on samples). */
     private static List<byte[]> buildVariants(BufferedImage src) throws IOException {
         List<byte[]> variants = new ArrayList<>();
-        variants.add(toPng(grayscale(upscale(src, 3, true))));   // smooth 3x
-        variants.add(toPng(otsu(upscale(src, 4, true))));        // smooth 4x + binarized
+        variants.add(toPng(otsu(upscale(src, 4, true), false))); // smooth 4x + Otsu
+        variants.add(toPng(otsu(upscale(src, 4, true), true)));  // smooth 4x + Otsu, polarity-corrected
+        variants.add(toPng(grayscale(upscale(src, 3, true))));   // smooth 3x grayscale
         variants.add(toPng(grayscale(upscale(src, 5, false))));  // hard 5x pixels
+        variants.add(toPng(grayscale(upscale(src, 2, true))));   // smooth 2x grayscale
         return variants;
     }
 
@@ -163,8 +204,12 @@ public final class TesseractOcr {
         return img;
     }
 
-    /** Grayscale + global Otsu threshold → black & white image. */
-    private static BufferedImage otsu(BufferedImage img) {
+    /**
+     * Grayscale + global Otsu threshold → black & white image. When
+     * {@code autoInvert} is set the polarity is corrected so the text is dark
+     * on a light background (tesseract's expectation).
+     */
+    private static BufferedImage otsu(BufferedImage img, boolean autoInvert) {
         grayscale(img);
         int w = img.getWidth();
         int h = img.getHeight();
@@ -201,10 +246,21 @@ public final class TesseractOcr {
                 threshold = t;
             }
         }
+        boolean invert = false;
+        if (autoInvert) {
+            int dark = 0;
+            for (int t = 0; t <= threshold; t++) {
+                dark += hist[t];
+            }
+            invert = dark > total / 2; // dark background → flip polarity
+        }
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
                 int lum = (img.getRGB(x, y) >> 16) & 0xFF;
                 int v = lum <= threshold ? 0 : 255;
+                if (invert) {
+                    v = 255 - v;
+                }
                 img.setRGB(x, y, (v << 16) | (v << 8) | v);
             }
         }

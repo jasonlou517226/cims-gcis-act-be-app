@@ -1,14 +1,18 @@
 package com.gcis.pages;
 
 import com.gcis.support.CaptchaOcr;
-import com.microsoft.playwright.APIResponse;
+import com.microsoft.playwright.Browser;
+import com.microsoft.playwright.BrowserContext;
+import com.microsoft.playwright.BrowserType;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
+import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.PlaywrightException;
 import com.microsoft.playwright.Response;
 import com.microsoft.playwright.options.LoadState;
 import com.microsoft.playwright.options.WaitUntilState;
 
+import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -31,17 +35,12 @@ public class OnlineBookingLoginPage {
 
     public static final String URL = "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/FHS-CH/login";
 
-    /** Origin + context path of the SPA (URL without the hash route), used to build API endpoints. */
-    private static final String API_BASE = URL.substring(0, URL.indexOf('#'));
-
-    /** Backend APIs used by the SPA (relative to /OnlineBookingWeb). */
-    public static final String SITE_PARAMS_API = "/online-booking-user/siteParams/map";
+    /** Backend API paths used by the SPA (matched against on-the-wire response URLs). */
     public static final String CAPTCHA_API = "/online-booking-user/generateCaptcha/image";
     public static final String LOGIN_API = "/online-booking-user/loginWithSam";
 
     /** Backend respCode values observed on the login API. */
     public static final int RESP_OK = 0;
-    public static final int RESP_BAD_CREDENTIALS = 100;
     public static final int RESP_CAPTCHA_FAIL = 113;
 
     private final Page page;
@@ -249,24 +248,6 @@ public class OnlineBookingLoginPage {
         return captchaInput.isVisible();
     }
 
-    /**
-     * Calls the site-params backend API through the browser context and returns
-     * the raw JSON. This is what feeds the SPA's site list (FHS-CH etc.), so it
-     * is a good backend health signal.
-     */
-    public APIResponse fetchSiteParams() {
-        return page.request().get(API_BASE + SITE_PARAMS_API.substring(1));
-    }
-
-    /**
-     * Calls the captcha generation API through the browser context. A healthy
-     * response is HTTP 200 with a non-trivial JSON body (contains the base64
-     * image and/or captcha key).
-     */
-    public APIResponse fetchCaptcha() {
-        return page.request().get(API_BASE + CAPTCHA_API.substring(1));
-    }
-
     /** Convenience accessor for request/response debugging in tests. */
     public Page page() {
         return page;
@@ -336,5 +317,82 @@ public class OnlineBookingLoginPage {
     /** True when the SPA navigated away from the login route (i.e. login succeeded). */
     public boolean hasLeftLoginPage() {
         return !page.url().contains("#/FHS-CH/login");
+    }
+
+    // ---------- Standalone local runner ----------
+
+    /**
+     * Local smoke run of this page object — no JUnit required (the former
+     * health-check test class has been retired). Launches Chromium, loads the
+     * SPA login route exactly once (via {@link #open()}) and verifies against
+     * that single load that the form renders and reflects typed input.
+     *
+     * Run with Maven exec (test scope includes this class):
+     *   mvn test-compile exec:java \
+     *       -Dexec.mainClass=com.gcis.pages.OnlineBookingLoginPage \
+     *       -Dexec.classpathScope=test
+     * or simply run {@code main()} from the IDE. Flags mirror TestBase:
+     * {@code -Dheaded=true} (fullscreen browser), {@code -Dslowmo=true},
+     * {@code -Dslowmo.ms=N}. Exits 0 when every check passes, 1 otherwise.
+     */
+    public static void main(String[] args) {
+        boolean headless = !"true".equalsIgnoreCase(System.getProperty("headed", "false"));
+        boolean slowMo = "true".equalsIgnoreCase(System.getProperty("slowmo", "false"));
+
+        try (Playwright playwright = Playwright.create()) {
+            BrowserType.LaunchOptions options = new BrowserType.LaunchOptions().setHeadless(headless);
+            if (slowMo) {
+                options.setSlowMo(Integer.getInteger("slowmo.ms", 2_000));
+            }
+            if (!headless) {
+                // Watch mode: open the browser window in full screen for easy viewing.
+                options.setArgs(List.of("--start-fullscreen"));
+            }
+            Browser browser = playwright.chromium().launch(options);
+            // Government site with self-signed/odd certificates; ignore HTTPS errors.
+            BrowserContext context = browser.newContext(
+                    new Browser.NewContextOptions().setIgnoreHTTPSErrors(true));
+            Page page = context.newPage();
+            page.setDefaultTimeout(30_000);
+
+            try {
+                OnlineBookingLoginPage loginPage = new OnlineBookingLoginPage(page);
+                // Single navigation for the whole smoke run: open() is the only
+                // place that touches the login URL (page.navigate(URL)); every
+                // check below just inspects the already-loaded page.
+                loginPage.open();
+
+                check("login form is visible", loginPage.isLoginFormVisible());
+                check("captcha input is visible", loginPage.isCaptchaVisible());
+                // Read the URL once and reuse it for both the diagnostic label
+                // and the route assertion; it is logged exactly once (below).
+                String currentUrl = loginPage.currentUrl();
+                check("stays on the SPA login route (current URL: " + currentUrl + ")",
+                        currentUrl.contains("#/FHS-CH/login"));
+
+                loginPage.fillUsername("healthcheck-user");
+                loginPage.fillPassword("healthcheck-pass");
+                check("username input reflects the typed value",
+                        loginPage.usernameInput.inputValue().contains("healthcheck-user"));
+                check("password input reflects the typed value",
+                        loginPage.passwordInput.inputValue().contains("healthcheck-pass"));
+
+                System.out.println("[SMOKE] OK — SPA login page rendered, all checks passed");
+            } finally {
+                context.close();
+                browser.close();
+            }
+        } catch (Exception e) {
+            System.out.println("[SMOKE] FAILED: " + e);
+            System.exit(1);
+        }
+    }
+
+    /** Records one smoke check; throws (failing the run) when it does not hold. */
+    private static void check(String what, boolean ok) {
+        if (!ok) {
+            throw new IllegalStateException("Check failed: " + what);
+        }
+        System.out.println("[SMOKE] ok: " + what);
     }
 }

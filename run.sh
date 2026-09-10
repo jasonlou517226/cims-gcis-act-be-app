@@ -3,13 +3,12 @@
 # run.sh — dhci2_auto_check 一鍵執行腳本
 #
 # 用法:
-#   ./run.sh                     # 預設 = booking（頁面載入檢查 1 次 + OCR 全自動登入）
-#   ./run.sh booking             # spaLoginPageLoadsSuccessfully（1 次）+ OCR 破解 captcha 全自動登入
-#   ./run.sh booking-all         # 執行 OnlineBookingLoginTest 全部 5 個測試方法 + OCR 全自動登入
+#   ./run.sh                     # 預設 = booking（OnlineBookingLoginPage 冒煙檢查 1 次 + OCR 全自動登入）
+#   ./run.sh booking             # OnlineBookingLoginPage.main() 本機直跑冒煙檢查（1 次）+ OCR 破解 captcha 全自動登入
 #   ./run.sh ocr                 # 只執行 OnlineBookingOcrLoginTest（OCR 破解 captcha 全自動登入）
 #   ./run.sh portal              # 執行 LoginTest（School Portal，4 個測試方法）
-#   ./run.sh all                 # 執行全部測試類（LoginTest + OnlineBookingLoginTest + OnlineBookingOcrLoginTest）
-#   ./run.sh booking#loginFormReflectsInput        # 執行指定單一測試方法
+#   ./run.sh all                 # 執行全部測試類（LoginTest + OnlineBookingOcrLoginTest）
+#   ./run.sh portal#loginWithValidCredentials   # 執行指定單一測試方法
 #   ./run.sh install             # 安裝 Playwright Chromium 瀏覽器（首次執行前需做一次）
 #   ./run.sh -h                  # 顯示說明
 #
@@ -53,7 +52,7 @@ HEADED=""
 SLOWMO=""
 
 usage() {
-    sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
 }
 
@@ -90,18 +89,16 @@ case "$TARGET" in
         "$MVN" exec:java -e -D exec.mainClass=com.microsoft.playwright.CLI -D exec.args="install chromium"
         ;;
     all)
-        echo "▶️  執行全部測試（3 個測試類）..."
+        echo "▶️  執行全部測試（LoginTest + OnlineBookingOcrLoginTest）..."
         "$MVN" test "${OPTS[@]}" "${CRED[@]}"
         ;;
     booking)
-        echo "▶️  執行 spaLoginPageLoadsSuccessfully（1 次）+ OCR 全自動登入..."
-        "$MVN" test "${OPTS[@]}" "${CRED[@]}" \
-            -Dtest='OnlineBookingLoginTest#spaLoginPageLoadsSuccessfully,OnlineBookingOcrLoginTest'
-        ;;
-    booking-all)
-        echo "▶️  執行 OnlineBookingLoginTest 全部 5 個測試方法 + OCR 全自動登入..."
-        "$MVN" test "${OPTS[@]}" "${CRED[@]}" \
-            -Dtest='OnlineBookingLoginTest,OnlineBookingOcrLoginTest'
+        echo "▶️  執行 OnlineBookingLoginPage 本機直跑冒煙檢查 + OCR 全自動登入..."
+        # 1) 直接執行 Page Object 的 main()（不需 JUnit）
+        "$MVN" test-compile exec:java "${OPTS[@]}" \
+            -D exec.mainClass=com.gcis.pages.OnlineBookingLoginPage -D exec.classpathScope=test
+        # 2) OCR 破解 captcha 全自動登入（set -e：上一步失敗即中止）
+        "$MVN" test "${OPTS[@]}" "${CRED[@]}" -Dtest=OnlineBookingOcrLoginTest
         ;;
     portal)
         echo "▶️  執行 LoginTest..."
@@ -111,12 +108,12 @@ case "$TARGET" in
         echo "▶️  執行 OnlineBookingOcrLoginTest（macOS Vision OCR）..."
         "$MVN" test "${OPTS[@]}" "${CRED[@]}" -Dtest=OnlineBookingOcrLoginTest
         ;;
-    booking#*|portal#*)
+    portal#*)
         echo "▶️  執行單一測試方法: $TARGET"
         "$MVN" test "${OPTS[@]}" -Dtest="$TARGET"
         ;;
     *)
-        echo "❌ 未知的目標: $TARGET（可用: all | booking | booking-all | portal | ocr | booking#方法 | portal#方法 | install）" >&2
+        echo "❌ 未知的目標: $TARGET（可用: all | booking | portal | ocr | portal#方法 | install）" >&2
         usage
         ;;
 esac
