@@ -27,9 +27,11 @@ import java.util.concurrent.TimeUnit;
  *   hash routes (e.g. #/FHS-CH/login). Navigation therefore means: goto the
  *   base URL with the hash, then wait for the React app to render.
  * - The login form posts to /online-booking-user/loginWithSam with a captcha
- *   (captchaKey + captchaAns). The captcha answer is only shown inside the
- *   generated image; we solve it with macOS Vision OCR (see CaptchaOcr) and
- *   retry with a fresh captcha until one is recognized & accepted.
+ *   (captchaKey + captchaAns). The captcha answer is solved by
+ *   {@link #solveCurrentCaptcha(long)}: the ACT/test backend conveniently
+ *   echoes the answer in the response (captchaForACT) and it is used
+ *   directly; environments without that field fall back to OCR
+ *   (Vision/Tesseract via {@link CaptchaOcr}) with retries.
  */
 public class OnlineBookingLoginPage {
 
@@ -52,8 +54,12 @@ public class OnlineBookingLoginPage {
     private final Locator loginButton;
     private final Locator reloadCaptchaButton;
 
-    /** Latest captcha image payload (base64 JPEG, without data: prefix) seen on the wire. */
-    private final BlockingQueue<String> captchaPayloads = new LinkedBlockingQueue<>();
+    /** A captcha seen on the wire: the image payload plus the test-env answer. */
+    private record Captcha(String imageBase64, String actAnswer) {
+    }
+
+    /** Latest captcha payloads seen on the wire (image + test-env answer). */
+    private final BlockingQueue<Captcha> captchaPayloads = new LinkedBlockingQueue<>();
 
     /** How long the queue must stay quiet before its newest payload is considered "on screen". */
     private static final long SETTLE_MILLIS = 800;
@@ -79,9 +85,14 @@ public class OnlineBookingLoginPage {
             String url = response.url();
             if (url.contains(CAPTCHA_API)) {
                 try {
-                    String base64 = extractCaptchaBase64(response.text());
+                    String body = response.text();
+                    String base64 = extractCaptchaBase64(body);
+                    // The ACT/test backend echoes the answer (captchaForACT);
+                    // production-like environments do not — OCR stays the
+                    // fallback for those.
+                    String act = extractJsonStringField(body, "captchaForACT");
                     if (base64 != null) {
-                        captchaPayloads.offer(base64);
+                        captchaPayloads.offer(new Captcha(base64, act));
                     }
                 } catch (PlaywrightException ignored) {
                     // body may be unavailable for cached/duplicated responses
@@ -163,6 +174,23 @@ public class OnlineBookingLoginPage {
             }
         }
         return out.toString();
+    }
+
+    /**
+     * Extracts a plain (non-escaped) JSON string field like
+     * "captchaForACT":"AB12" from a raw body, or null when absent/empty.
+     */
+    private static String extractJsonStringField(String body, String field) {
+        int i = body.indexOf("\"" + field + "\"");
+        if (i < 0) {
+            return null;
+        }
+        int start = body.indexOf("\"", body.indexOf(":", i + field.length() + 2) + 1) + 1;
+        int end = body.indexOf("\"", start);
+        if (start <= 0 || end <= start) {
+            return null;
+        }
+        return body.substring(start, end);
     }
 
     /** Opens the SPA login route and waits for the React app to render. */
@@ -256,12 +284,15 @@ public class OnlineBookingLoginPage {
     // ---------- Captcha solving ----------
 
     /**
-     * Waits for the next captcha image payload captured from the network and
-     * OCRs it. Returns the recognized (cleaned, upper-cased) text, or
+     * Waits for the next captcha seen on the network and returns its answer.
+     * On the ACT/test backend the answer rides along in the response
+     * ({@code captchaForACT}) and is used directly (deterministic, ~100%);
+     * otherwise the image is OCR'd (best-effort, see {@link CaptchaOcr}) and
+     * the recognized (cleaned, upper-cased) text is returned. Returns
      * {@code null} if no payload arrives or nothing could be read.
      */
     public String solveCurrentCaptcha(long waitMillis) throws InterruptedException {
-        String latest = captchaPayloads.poll(waitMillis, TimeUnit.MILLISECONDS);
+        Captcha latest = captchaPayloads.poll(waitMillis, TimeUnit.MILLISECONDS);
         if (latest == null) {
             return null;
         }
@@ -271,14 +302,19 @@ public class OnlineBookingLoginPage {
         // received — OCR anything older and the answer can never match.
         long deadline = System.currentTimeMillis() + SETTLE_MILLIS;
         while (System.currentTimeMillis() < deadline) {
-            String newer = captchaPayloads.poll(
+            Captcha newer = captchaPayloads.poll(
                     deadline - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
             if (newer != null) {
                 latest = newer;
                 deadline = System.currentTimeMillis() + SETTLE_MILLIS;
             }
         }
-        return CaptchaOcr.solveClean(latest);
+        if (latest.actAnswer() != null && !latest.actAnswer().isBlank()) {
+            System.out.println("[captcha] using captchaForACT from the test backend: "
+                    + latest.actAnswer());
+            return latest.actAnswer();
+        }
+        return CaptchaOcr.solveClean(latest.imageBase64());
     }
 
     /** Clicks "Renew the image" to request a fresh captcha (also consumed by {@link #solveCurrentCaptcha(long)}). */

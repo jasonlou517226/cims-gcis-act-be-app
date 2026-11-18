@@ -73,8 +73,7 @@ class OnlineBookingOcrLoginTest extends TestBase {
                 continue;
             }
             lastCaptcha = answer;
-            System.out.println("attempt " + attempt + ": OCR answer = " + answer
-                    + " (engine: " + com.gcis.support.CaptchaOcr.activeBackend() + ")");
+            System.out.println("attempt " + attempt + ": captcha answer = " + answer);
             // Re-fill credentials every time: the SPA clears the form after a
             // failed login, and client-side validation would silently block
             // the submit if a required field became empty.
