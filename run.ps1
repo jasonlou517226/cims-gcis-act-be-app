@@ -124,7 +124,7 @@ if ($Slowmo -eq 'true') { Write-Host 'Slow motion (2s per action)' }
 $Opts = @("-Dheaded=$Headed", "-Dslowmo=$Slowmo")
 $Cred = @(
     "-Dob.login=$(if ($env:OB_LOGIN) { $env:OB_LOGIN } else { '1064984038' })",
-    "-Dob.password=$(if ($env:OB_PASSWORD) { $env:OB_PASSWORD } else { 'Gold1234{}7' })",
+    "-Dob.password=$(if ($env:OB_PASSWORD) { $env:OB_PASSWORD } else { 'Gold1234{}8' })",
     "-Dob.attempts=$(if ($env:OB_ATTEMPTS) { $env:OB_ATTEMPTS } else { 15 })"
 )
 
