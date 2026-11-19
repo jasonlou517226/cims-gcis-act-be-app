@@ -1,7 +1,14 @@
 package com.gcis.pages;
 
 import com.gcis.support.CaptchaOcr;
-import com.microsoft.playwright.*;
+import com.microsoft.playwright.Browser;
+import com.microsoft.playwright.BrowserContext;
+import com.microsoft.playwright.BrowserType;
+import com.microsoft.playwright.Locator;
+import com.microsoft.playwright.Page;
+import com.microsoft.playwright.Playwright;
+import com.microsoft.playwright.PlaywrightException;
+import com.microsoft.playwright.Response;
 import com.microsoft.playwright.options.LoadState;
 import com.microsoft.playwright.options.WaitUntilState;
 
@@ -11,22 +18,38 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Page Object for the DH Online Booking SPA (React, hash routing).
+ * Page Object for the DH Online Booking SPA — Student Health Service
+ * (React, hash routing), LOGIN-ONLY. Highly mirrors
+ * {@link OnlineBookingLoginPage} (Child Health Service); only the service
+ * selection and routes differ.
  *
  * Target: https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/StdHS/login
+ * (reached via the service-selection root route {@code #/login}, where the
+ * "Student Health Service" option routes to the StdHS login form)
  *
  * Notes:
  * - The SPA is a React app served from a single index.html; real "pages" are
  *   hash routes (e.g. #/StdHS/login). Navigation therefore means: goto the
  *   base URL with the hash, then wait for the React app to render.
  * - The login form posts to /online-booking-user/loginWithSam with a captcha
- *   (captchaKey + captchaAns). The captcha answer is only shown inside the
- *   generated image; we solve it with macOS Vision OCR (see CaptchaOcr) and
- *   retry with a fresh captcha until one is recognized & accepted.
+ *   (captchaKey + captchaAns). The captcha answer is solved by
+ *   {@link #solveCurrentCaptcha(long)}: the ACT/test backend conveniently
+ *   echoes the answer in the response (captchaForACT) and it is used
+ *   directly; environments without that field fall back to OCR
+ *   (Vision/Tesseract via {@link CaptchaOcr}) with retries.
+ * - The StdHS smoke ({@code main()}) is login-only: service selection →
+ *   captcha login → confirm the SPA left the login route.
  */
 public class OnlineBookingLoginPageStdHS {
 
     public static final String URL = "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/StdHS/login";
+
+    /** Root service-selection login route and the StdHS option label on it. */
+    public static final String SERVICE_SELECTION_URL =
+            "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/login";
+    public static final String STUDENT_HEALTH_SERVICE_TEXT = "Student Health Service";
+
+    private static final String LOGIN_ROUTE_HASH = "#/StdHS/login";
 
     /** Backend API paths used by the SPA (matched against on-the-wire response URLs). */
     public static final String CAPTCHA_API = "/online-booking-user/generateCaptcha/image";
@@ -44,9 +67,14 @@ public class OnlineBookingLoginPageStdHS {
     private final Locator captchaInput;
     private final Locator loginButton;
     private final Locator reloadCaptchaButton;
+    private final Locator studentHealthServiceOption;
 
-    /** Latest captcha image payload (base64 JPEG, without data: prefix) seen on the wire. */
-    private final BlockingQueue<String> captchaPayloads = new LinkedBlockingQueue<>();
+    /** A captcha seen on the wire: the image payload plus the test-env answer. */
+    private record Captcha(String imageBase64, String actAnswer) {
+    }
+
+    /** Latest captcha payloads seen on the wire (image + test-env answer). */
+    private final BlockingQueue<Captcha> captchaPayloads = new LinkedBlockingQueue<>();
 
     /** How long the queue must stay quiet before its newest payload is considered "on screen". */
     private static final long SETTLE_MILLIS = 800;
@@ -64,6 +92,12 @@ public class OnlineBookingLoginPageStdHS {
         this.loginButton = page.locator("//*[@id=\"login_button\"]/span");
         this.reloadCaptchaButton = page.locator("#reloadImage").first();
 
+        // The root #/login route shows a service picker; its labels come from
+        // the backend translations (e.g. "Student Health Service Booking
+        // System"), so substring text matching is used. Clicking the card
+        // routes to #/StdHS/login.
+        this.studentHealthServiceOption = page.getByText(STUDENT_HEALTH_SERVICE_TEXT).first();
+
         // The SPA renders the captcha as an <img> fed by an XHR response; the
         // raw base64 only exists on the network layer, so capture it here.
         // Login results are also read from the wire (respCode) because the SPA
@@ -72,9 +106,14 @@ public class OnlineBookingLoginPageStdHS {
             String url = response.url();
             if (url.contains(CAPTCHA_API)) {
                 try {
-                    String base64 = extractCaptchaBase64(response.text());
+                    String body = response.text();
+                    String base64 = extractCaptchaBase64(body);
+                    // The ACT/test backend echoes the answer (captchaForACT);
+                    // production-like environments do not — OCR stays the
+                    // fallback for those.
+                    String act = extractJsonStringField(body, "captchaForACT");
                     if (base64 != null) {
-                        captchaPayloads.offer(base64);
+                        captchaPayloads.offer(new Captcha(base64, act));
                     }
                 } catch (PlaywrightException ignored) {
                     // body may be unavailable for cached/duplicated responses
@@ -158,11 +197,34 @@ public class OnlineBookingLoginPageStdHS {
         return out.toString();
     }
 
-    /** Opens the SPA login route and waits for the React app to render. */
+    /**
+     * Extracts a plain (non-escaped) JSON string field like
+     * "captchaForACT":"AB12" from a raw body, or null when absent/empty.
+     */
+    private static String extractJsonStringField(String body, String field) {
+        int i = body.indexOf("\"" + field + "\"");
+        if (i < 0) {
+            return null;
+        }
+        int start = body.indexOf("\"", body.indexOf(":", i + field.length() + 2) + 1) + 1;
+        int end = body.indexOf("\"", start);
+        if (start <= 0 || end <= start) {
+            return null;
+        }
+        return body.substring(start, end);
+    }
+
+    /**
+     * Opens the SPA through the service-selection root route: navigates to
+     * {@code #/login}, clicks the "Student Health Service" option and waits
+     * for the StdHS login form to render (the SPA lazy-loads the service's
+     * micro-app after the route change). Throws when the login form does not
+     * appear or the browser does not end up on the StdHS login route.
+     */
     public void open() {
-        page.navigate(URL, new Page.NavigateOptions()
+        page.navigate(SERVICE_SELECTION_URL, new Page.NavigateOptions()
                 .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
-        // Wait for the SPA to finish bootstrapping and render the login form
+        // Wait for the SPA to finish bootstrapping and render the service picker
         try {
             page.waitForLoadState(LoadState.NETWORKIDLE,
                     new Page.WaitForLoadStateOptions().setTimeout(15_000));
@@ -170,7 +232,13 @@ public class OnlineBookingLoginPageStdHS {
             // Some analytics/long-poll requests may keep the network busy;
             // the element waits below are the authoritative check.
         }
+        studentHealthServiceOption.waitFor(new Locator.WaitForOptions().setTimeout(20_000));
+        studentHealthServiceOption.click();
         usernameInput.waitFor(new Locator.WaitForOptions().setTimeout(20_000));
+        if (!page.url().contains(LOGIN_ROUTE_HASH)) {
+            throw new IllegalStateException("Expected the StdHS login route after selecting"
+                    + " Student Health Service, but at: " + page.url());
+        }
     }
 
     public OnlineBookingLoginPageStdHS fillUsername(String username) {
@@ -249,12 +317,15 @@ public class OnlineBookingLoginPageStdHS {
     // ---------- Captcha solving ----------
 
     /**
-     * Waits for the next captcha image payload captured from the network and
-     * OCRs it. Returns the recognized (cleaned, upper-cased) text, or
+     * Waits for the next captcha seen on the network and returns its answer.
+     * On the ACT/test backend the answer rides along in the response
+     * ({@code captchaForACT}) and is used directly (deterministic, ~100%);
+     * otherwise the image is OCR'd (best-effort, see {@link CaptchaOcr}) and
+     * the recognized (cleaned, upper-cased) text is returned. Returns
      * {@code null} if no payload arrives or nothing could be read.
      */
     public String solveCurrentCaptcha(long waitMillis) throws InterruptedException {
-        String latest = captchaPayloads.poll(waitMillis, TimeUnit.MILLISECONDS);
+        Captcha latest = captchaPayloads.poll(waitMillis, TimeUnit.MILLISECONDS);
         if (latest == null) {
             return null;
         }
@@ -264,14 +335,19 @@ public class OnlineBookingLoginPageStdHS {
         // received — OCR anything older and the answer can never match.
         long deadline = System.currentTimeMillis() + SETTLE_MILLIS;
         while (System.currentTimeMillis() < deadline) {
-            String newer = captchaPayloads.poll(
+            Captcha newer = captchaPayloads.poll(
                     deadline - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
             if (newer != null) {
                 latest = newer;
                 deadline = System.currentTimeMillis() + SETTLE_MILLIS;
             }
         }
-        return CaptchaOcr.solveClean(latest);
+        if (latest.actAnswer() != null && !latest.actAnswer().isBlank()) {
+            System.out.println("[captcha] using captchaForACT from the test backend: "
+                    + latest.actAnswer());
+            return latest.actAnswer();
+        }
+        return CaptchaOcr.solveClean(latest.imageBase64());
     }
 
     /** Clicks "Renew the image" to request a fresh captcha (also consumed by {@link #solveCurrentCaptcha(long)}). */
@@ -309,28 +385,43 @@ public class OnlineBookingLoginPageStdHS {
 
     /** True when the SPA navigated away from the login route (i.e. login succeeded). */
     public boolean hasLeftLoginPage() {
-        return !page.url().contains("#/FHS-CH/login");
+        return !page.url().contains(LOGIN_ROUTE_HASH);
     }
 
     // ---------- Standalone local runner ----------
 
     /**
-     * Local smoke run of this page object — no JUnit required (the former
-     * health-check test class has been retired). Launches Chromium, loads the
-     * SPA login route exactly once (via {@link #open()}) and verifies against
-     * that single load that the form renders and reflects typed input.
+     * Local smoke run — LOGIN-ONLY, no JUnit required. Launches Chromium,
+     * opens the service-selection root route ({@code #/login}), selects
+     * "Student Health Service", logs in with a real account (captcha solved
+     * via {@link #solveCurrentCaptcha(long)}, retrying like
+     * {@code OnlineBookingOcrLoginTest}) and confirms the SPA left the
+     * StdHS login route.
+     *
+     * Credentials (never hard-code secrets): -Dob.login=... -Dob.password=...
+     * or STDHS_LOGIN / STDHS_PASSWORD env vars; the run aborts when they are
+     * absent. ({@code run.ps1 stdhs} wires the built-in test account in.)
      *
      * Run with Maven exec (test scope includes this class):
      *   mvn test-compile exec:java \
-     *       -Dexec.mainClass=com.gcis.pages.OnlineBookingLoginPage \
+     *       -Dexec.mainClass=com.gcis.pages.OnlineBookingLoginPageStdHS \
      *       -Dexec.classpathScope=test
      * or simply run {@code main()} from the IDE. Flags mirror TestBase:
      * {@code -Dheaded=true} (fullscreen browser), {@code -Dslowmo=true},
-     * {@code -Dslowmo.ms=N}. Exits 0 when every check passes, 1 otherwise.
+     * {@code -Dslowmo.ms=N}, {@code -Dob.attempts=N} (captcha budget).
+     * Exits 0 when every check passes, 1 otherwise.
      */
     public static void main(String[] args) {
         boolean headless = !"true".equalsIgnoreCase(System.getProperty("headed", "false"));
         boolean slowMo = "true".equalsIgnoreCase(System.getProperty("slowmo", "false"));
+
+        String login = firstNonBlank(System.getProperty("ob.login"), System.getenv("STDHS_LOGIN"));
+        String password = firstNonBlank(System.getProperty("ob.password"), System.getenv("STDHS_PASSWORD"));
+        if (login == null || password == null) {
+            System.out.println("[SMOKE] FAILED: the login-only run needs real credentials — set"
+                    + " -Dob.login/-Dob.password or STDHS_LOGIN/STDHS_PASSWORD env vars");
+            System.exit(2);
+        }
 
         try (Playwright playwright = Playwright.create()) {
             BrowserType.LaunchOptions options = new BrowserType.LaunchOptions().setHeadless(headless);
@@ -350,27 +441,79 @@ public class OnlineBookingLoginPageStdHS {
 
             try {
                 OnlineBookingLoginPageStdHS loginPage = new OnlineBookingLoginPageStdHS(page);
-                // Single navigation for the whole smoke run: open() is the only
-                // place that touches the login URL (page.navigate(URL)); every
-                // check below just inspects the already-loaded page.
                 loginPage.open();
 
                 check("login form is visible", loginPage.isLoginFormVisible());
                 check("captcha input is visible", loginPage.isCaptchaVisible());
-                // Read the URL once and reuse it for both the diagnostic label
-                // and the route assertion; it is logged exactly once (below).
-                String currentUrl = loginPage.currentUrl();
-                check("stays on the SPA login route (current URL: " + currentUrl + ")",
-                        currentUrl.contains("#/FHS-CH/login"));
 
-                loginPage.fillUsername("healthcheck-user");
-                loginPage.fillPassword("healthcheck-pass");
-                check("username input reflects the typed value",
-                        loginPage.usernameInput.inputValue().contains("healthcheck-user"));
-                check("password input reflects the typed value",
-                        loginPage.passwordInput.inputValue().contains("healthcheck-pass"));
+                // ---- Login (captcha retry loop, mirrors OnlineBookingOcrLoginTest) ----
+                final int maxAttempts = Integer.getInteger("ob.attempts", 5);
+                boolean accepted = false;
+                String failure = null;
+                for (int attempt = 1; attempt <= maxAttempts && !accepted; attempt++) {
+                    String answer = loginPage.solveCurrentCaptcha(20_000);
+                    if (answer == null || answer.length() != 4) {
+                        System.out.println("attempt " + attempt + ": captcha unreadable"
+                                + (answer == null ? "" : " [" + answer + "]") + ", renewing image");
+                        loginPage.reloadCaptcha();
+                        continue;
+                    }
+                    System.out.println("attempt " + attempt + ": captcha answer = " + answer);
+                    // Re-fill credentials every time: the SPA clears the form
+                    // after a failed login attempt.
+                    loginPage.fillUsername(login);
+                    loginPage.fillPassword(password);
+                    loginPage.fillCaptcha(answer);
 
-                System.out.println("[SMOKE] OK — SPA login page rendered, all checks passed");
+                    Response resp;
+                    try {
+                        resp = loginPage.submitAndWaitForLoginResponse(20_000);
+                    } catch (PlaywrightException timeout) {
+                        if (loginPage.hasLeftLoginPage()) {
+                            accepted = true;
+                            break;
+                        }
+                        loginPage.reloadCaptcha();
+                        continue;
+                    }
+
+                    String body = resp.text();
+                    Integer respCode = OnlineBookingLoginPageStdHS.respCodeOf(body);
+                    System.out.println("attempt " + attempt + ": respCode=" + respCode);
+                    if (respCode == null) {
+                        accepted = loginPage.hasLeftLoginPage();
+                        if (!accepted) {
+                            loginPage.reloadCaptcha();
+                        }
+                        continue;
+                    }
+                    if (respCode == RESP_CAPTCHA_FAIL) {
+                        // The SPA auto-fetches a fresh captcha after 113; just retry.
+                        continue;
+                    }
+                    if (respCode == RESP_OK) {
+                        accepted = loginPage.hasLeftLoginPage();
+                        if (!accepted) {
+                            loginPage.page().waitForTimeout(3_000);
+                            accepted = loginPage.hasLeftLoginPage();
+                            if (!accepted) {
+                                failure = "respCode 0 but still on the login route";
+                            }
+                        }
+                        break;
+                    }
+                    // Captcha was right, backend rejected the credentials.
+                    failure = "backend rejected login (" + errMsgOf(body) + ")";
+                    break;
+                }
+                check("login accepted (maxAttempts=" + maxAttempts
+                        + (failure == null ? "" : "; " + failure) + ")", accepted);
+
+                // Login-only: confirm we are off the login route and report
+                // where the SPA landed.
+                check("left the StdHS login route", loginPage.hasLeftLoginPage());
+                System.out.println("[SMOKE] OK — StdHS login-only passed, now at: "
+                        + loginPage.currentUrl());
             } finally {
                 context.close();
                 browser.close();
@@ -379,6 +522,14 @@ public class OnlineBookingLoginPageStdHS {
             System.out.println("[SMOKE] FAILED: " + e);
             System.exit(1);
         }
+    }
+
+    /** First non-blank value, or null when all are blank (env-var friendly). */
+    private static String firstNonBlank(String a, String b) {
+        if (a != null && !a.isBlank()) {
+            return a;
+        }
+        return (b != null && !b.isBlank()) ? b : null;
     }
 
     /** Records one smoke check; throws (failing the run) when it does not hold. */

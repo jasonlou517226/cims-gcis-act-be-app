@@ -4,7 +4,8 @@
 # Usage:
 #   .\run.ps1                     # default = booking (OnlineBookingLoginPage smoke x1 + OCR auto login)
 #   .\run.ps1 booking             # OnlineBookingLoginPage standalone main() smoke (x1) + OCR captcha auto login
-#   .\run.ps1 ocr             # run OnlineBookingOcrLoginTest (OCR captcha auto login + post-login journey)
+#   .\run.ps1 ocr                 # run OnlineBookingOcrLoginTest (OCR captcha auto login + post-login journey)
+#   .\run.ps1 stdhs               # OnlineBookingLoginPageStdHS standalone main() (Student Health Service journey)
 #   .\run.ps1 portal              # run LoginTest (School Portal, 4 methods)
 #   .\run.ps1 all                 # run all test classes (LoginTest + OnlineBookingOcrLoginTest)
 #   .\run.ps1 'portal#loginWithValidCredentials'  # run a single test method (quote the #)
@@ -15,6 +16,10 @@
 #   1. Environment variables OB_LOGIN / OB_PASSWORD  (e.g.  $env:OB_LOGIN='xxx'; $env:OB_PASSWORD='yyy'; .\run.ps1 ocr)
 #   2. Built-in test account when not set
 #   OCR captcha attempts: OB_ATTEMPTS (default 5; auto refresh captcha image and retry on OCR mistake)
+#
+# StdHS journey credentials (target: stdhs):
+#   1. Environment variables STDHS_LOGIN / STDHS_PASSWORD
+#   2. Built-in Student Health Service test account when not set
 #
 # Flags (can be combined with any target above):
 #   -H / -S      headed mode (fullscreen browser) / slow motion (2s per action)
@@ -127,6 +132,11 @@ $Cred = @(
     "-Dob.password=$(if ($env:OB_PASSWORD) { $env:OB_PASSWORD } else { 'Gold1234{}8' })",
     "-Dob.attempts=$(if ($env:OB_ATTEMPTS) { $env:OB_ATTEMPTS } else { 15 })"
 )
+$CredStdHS = @(
+    "-Dob.login=$(if ($env:STDHS_LOGIN) { $env:STDHS_LOGIN } else { '7620550380' })",
+    "-Dob.password=$(if ($env:STDHS_PASSWORD) { $env:STDHS_PASSWORD } else { 'Gold1234{}NN2' })",
+    "-Dob.attempts=$(if ($env:OB_ATTEMPTS) { $env:OB_ATTEMPTS } else { 15 })"
+)
 
 # ---------- Run ----------
 switch -Regex ($Target) {
@@ -149,6 +159,13 @@ switch -Regex ($Target) {
         & $MVN -B test @Opts @Cred '-Dtest=OnlineBookingOcrLoginTest'
         exit $LASTEXITCODE
     }
+    '^stdhs$' {
+        Write-Host 'Running OnlineBookingLoginPageStdHS standalone (Student Health Service, login-only)...'
+        # Direct local run of the StdHS page object main(): service selection →
+        # login (no JUnit involved; post-login journey not run yet).
+        & $MVN -B test-compile exec:java @Opts @CredStdHS '-Dexec.mainClass=com.gcis.pages.OnlineBookingLoginPageStdHS' '-Dexec.classpathScope=test'
+        exit $LASTEXITCODE
+    }
     '^portal$' {
         Write-Host 'Running LoginTest...'
         & $MVN -B test @Opts '-Dtest=LoginTest'
@@ -165,7 +182,7 @@ switch -Regex ($Target) {
         exit $LASTEXITCODE
     }
     default {
-        Write-Error "Unknown target: $Target (available: all | booking | portal | ocr | portal#method | install)"
+        Write-Error "Unknown target: $Target (available: all | booking | ocr | stdhs | portal | portal#method | install)"
         exit 1
     }
 }
