@@ -11,9 +11,10 @@ import org.junit.jupiter.api.Timeout;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Full automated login against the Online Booking SPA, followed by the
- * post-login journey (English walk → Traditional Chinese walk → Simplified
- * Chinese walk → logout; see
+ * Full automated login against the Online Booking SPA (via the
+ * service-selection root route — "Child Health Service" → FHS-CH login),
+ * followed by the post-login journey (English walk → Traditional Chinese
+ * walk → Simplified Chinese walk → logout; see
  * {@link OnlineBookingLoginPage#postLoginJourney()}).
  *
  * The captcha is solved with OCR (macOS Vision or tesseract — see

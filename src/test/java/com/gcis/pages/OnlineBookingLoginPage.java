@@ -22,6 +22,8 @@ import java.util.concurrent.TimeUnit;
  * Page Object for the DH Online Booking SPA (React, hash routing).
  *
  * Target: https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/FHS-CH/login
+ * (reached via the service-selection root route {@code #/login}, where the
+ * "Child Health Service" option routes to the FHS-CH login form)
  *
  * Notes:
  * - The SPA is a React app served from a single index.html; real "pages" are
@@ -43,6 +45,10 @@ import java.util.concurrent.TimeUnit;
 public class OnlineBookingLoginPage {
 
     public static final String URL = "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/FHS-CH/login";
+
+    /** Root service-selection login route and the FHS-CH option label on it. */
+    public static final String SERVICE_SELECTION_URL = "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/login";
+    public static final String CHILD_HEALTH_SERVICE_TEXT = "Child Health Service";
 
     /** Post-login hash routes covered by the smoke journey. */
     public static final String HOME_URL = "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/FHS-CH";
@@ -93,6 +99,7 @@ public class OnlineBookingLoginPage {
     private final Locator zhLanguageButton;
     private final Locator nextButtonSc;
     private final Locator scLanguageButton;
+    private final Locator childHealthServiceOption;
 
     /** A captcha seen on the wire: the image payload plus the test-env answer. */
     private record Captcha(String imageBase64, String actAnswer) {
@@ -138,6 +145,12 @@ public class OnlineBookingLoginPage {
         this.nextButtonSc = page.getByRole(AriaRole.BUTTON,
                 new Page.GetByRoleOptions().setName("下一页").setExact(true)).first();
         this.scLanguageButton = page.locator("#btn_zh-CN");
+
+        // The root #/login route shows a service picker; its labels come from
+        // the backend translations (e.g. "Child Health Service Booking
+        // System"), so substring text matching is used. Clicking the card
+        // routes to #/FHS-CH/login.
+        this.childHealthServiceOption = page.getByText(CHILD_HEALTH_SERVICE_TEXT).first();
 
         // Logout may render as a link or a button, and its label depends on
         // the UI language (Logout / 登出 / 退出).
@@ -262,11 +275,17 @@ public class OnlineBookingLoginPage {
         return body.substring(start, end);
     }
 
-    /** Opens the SPA login route and waits for the React app to render. */
+    /**
+     * Opens the SPA through the service-selection root route: navigates to
+     * {@code #/login}, clicks the "Child Health Service" option and waits for
+     * the FHS-CH login form to render (the SPA lazy-loads the service's
+     * micro-app after the route change). Throws when the login form does not
+     * appear or the browser does not end up on the FHS-CH login route.
+     */
     public void open() {
-        page.navigate(URL, new Page.NavigateOptions()
+        page.navigate(SERVICE_SELECTION_URL, new Page.NavigateOptions()
                 .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
-        // Wait for the SPA to finish bootstrapping and render the login form
+        // Wait for the SPA to finish bootstrapping and render the service picker
         try {
             page.waitForLoadState(LoadState.NETWORKIDLE,
                     new Page.WaitForLoadStateOptions().setTimeout(15_000));
@@ -274,7 +293,13 @@ public class OnlineBookingLoginPage {
             // Some analytics/long-poll requests may keep the network busy;
             // the element waits below are the authoritative check.
         }
+        childHealthServiceOption.waitFor(new Locator.WaitForOptions().setTimeout(20_000));
+        childHealthServiceOption.click();
         usernameInput.waitFor(new Locator.WaitForOptions().setTimeout(20_000));
+        if (!page.url().contains(LOGIN_ROUTE_HASH)) {
+            throw new IllegalStateException("Expected the FHS-CH login route after selecting"
+                    + " Child Health Service, but at: " + page.url());
+        }
     }
 
     public OnlineBookingLoginPage fillUsername(String username) {
@@ -669,11 +694,12 @@ public class OnlineBookingLoginPage {
 
     /**
      * Local smoke run of the full post-login journey — no JUnit required.
-     * Launches Chromium, logs in with a real account (captcha solved via
-     * {@link #solveCurrentCaptcha(long)}, retrying like
-     * {@code OnlineBookingOcrLoginTest}), then walks the FHS-CH routes in
-     * English (steps 1-5), Traditional Chinese (steps 6-10), Simplified
-     * Chinese (steps 11-15) and finally logs out (step 16).
+     * Launches Chromium, opens the service-selection root route
+     * ({@code #/login}), selects "Child Health Service", logs in with a real
+     * account (captcha solved via {@link #solveCurrentCaptcha(long)},
+     * retrying like {@code OnlineBookingOcrLoginTest}), then walks the FHS-CH
+     * routes in English (steps 1-5), Traditional Chinese (steps 6-10),
+     * Simplified Chinese (steps 11-15) and finally logs out (step 16).
      *
      * Credentials (never hard-code secrets): -Dob.login=... -Dob.password=...
      * or OB_LOGIN / OB_PASSWORD env vars; the run aborts when they are absent.
