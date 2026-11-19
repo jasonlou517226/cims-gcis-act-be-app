@@ -170,9 +170,9 @@ switch -Regex ($Target) {
         exit $LASTEXITCODE
     }
     '^stdhs$' {
-        Write-Host 'Running OnlineBookingLoginPageStdHS standalone (Student Health Service, login + steps 17-22)...'
+        Write-Host 'Running OnlineBookingLoginPageStdHS standalone (Student Health Service, login + steps 17-28)...'
         # Direct local run of the StdHS page object main(): service selection →
-        # login → health/findings/what's-new/appointment/profile/password walk.
+        # login → English walk (17-22) → 繁體中文 walk (23-28).
         & $MVN -B test-compile exec:java @Opts @CredStdHS '-Dexec.mainClass=com.gcis.pages.OnlineBookingLoginPageStdHS' '-Dexec.classpathScope=test'
         exit $LASTEXITCODE
     }
