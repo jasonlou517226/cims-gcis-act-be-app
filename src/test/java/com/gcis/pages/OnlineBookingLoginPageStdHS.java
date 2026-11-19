@@ -45,8 +45,7 @@ public class OnlineBookingLoginPageStdHS {
     public static final String URL = "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/StdHS/login";
 
     /** Root service-selection login route and the StdHS option label on it. */
-    public static final String SERVICE_SELECTION_URL =
-            "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/login";
+    public static final String SERVICE_SELECTION_URL = "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/login";
     public static final String STUDENT_HEALTH_SERVICE_TEXT = "Student Health Service";
 
     private static final String LOGIN_ROUTE_HASH = "#/StdHS/login";
