@@ -9,6 +9,7 @@ import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.PlaywrightException;
 import com.microsoft.playwright.Response;
+import com.microsoft.playwright.options.AriaRole;
 import com.microsoft.playwright.options.LoadState;
 import com.microsoft.playwright.options.WaitUntilState;
 
@@ -37,19 +38,42 @@ import java.util.concurrent.TimeUnit;
  *   echoes the answer in the response (captchaForACT) and it is used
  *   directly; environments without that field fall back to OCR
  *   (Vision/Tesseract via {@link CaptchaOcr}) with retries.
- * - The StdHS smoke ({@code main()}) is login-only: service selection →
- *   captcha login → confirm the SPA left the login route.
+ * - The StdHS smoke ({@code main()}) logs in and then walks the StdHS pages
+ *   (steps 17-22): Health Message (image) → View Health Assessment Findings
+ *   and Recommendations (accessed) → What's New (iAM Smart notice,
+ *   "Next" → back to Health Message) → Appointment home (reschedule
+ *   footnote) → Change Personal Email → Change Password.
  */
 public class OnlineBookingLoginPageStdHS {
 
     public static final String URL = "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/StdHS/login";
 
     /** Root service-selection login route and the StdHS option label on it. */
-    public static final String SERVICE_SELECTION_URL = "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/login";
+    public static final String SERVICE_SELECTION_URL =
+            "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/login";
     public static final String STUDENT_HEALTH_SERVICE_TEXT = "Student Health Service";
 
     private static final String LOGIN_ROUTE_HASH = "#/StdHS/login";
 
+    /** Post-login hash routes covered by the StdHS journey (steps 17-22). */
+    public static final String HOME_URL = "https://testing.clinical.dh.gov.hk/OnlineBookingWeb/#/StdHS";
+    public static final String HEALTH_URL = HOME_URL + "/spa/spa-wsmash/health";
+    public static final String FINDING_AND_RECOMMENDATION_URL =
+            HOME_URL + "/spa/spa-wsmash/findingAndRecommendation";
+    public static final String LATEST_NEWS_URL = HOME_URL + "/latestNews";
+    public static final String CHANGE_PROFILE_URL = HOME_URL + "/changeProfile";
+    public static final String CHANGE_PASSWORD_URL = HOME_URL + "/changePassword";
+
+    /** Marker texts that prove each page rendered successfully (exact UI copy). */
+    public static final String LATEST_NEWS_MARKER_TEXT_1 = "To \"iAM Smart\" user:";
+    public static final String LATEST_NEWS_MARKER_TEXT_2 =
+            "Due to system update, please reset the linkage before login to Student Health"
+                    + " Service through the \"iAM Smart\" platform.";
+    public static final String APPT_FOOTNOTE_MARKER_TEXT =
+            "The appointment can only be rescheduled within the coming 4 weeks."
+                    + " If you wish to reschedule to a later date, please log in and try again later.";
+    public static final String CHANGE_PROFILE_MARKER_TEXT = "Change Personal Email";
+    public static final String CHANGE_PASSWORD_MARKER_TEXT = "Change Password";
     /** Backend API paths used by the SPA (matched against on-the-wire response URLs). */
     public static final String CAPTCHA_API = "/online-booking-user/generateCaptcha/image";
     public static final String LOGIN_API = "/online-booking-user/loginWithSam";
@@ -67,6 +91,7 @@ public class OnlineBookingLoginPageStdHS {
     private final Locator loginButton;
     private final Locator reloadCaptchaButton;
     private final Locator studentHealthServiceOption;
+    private final Locator nextButton;
 
     /** A captcha seen on the wire: the image payload plus the test-env answer. */
     private record Captcha(String imageBase64, String actAnswer) {
@@ -96,6 +121,11 @@ public class OnlineBookingLoginPageStdHS {
         // System"), so substring text matching is used. Clicking the card
         // routes to #/StdHS/login.
         this.studentHealthServiceOption = page.getByText(STUDENT_HEALTH_SERVICE_TEXT).first();
+
+        // What's New page "Next" button (MUI button, label in a child <span>,
+        // so accessible-name matching beats id guessing).
+        this.nextButton = page.getByRole(AriaRole.BUTTON,
+                new Page.GetByRoleOptions().setName("Next").setExact(true)).first();
 
         // The SPA renders the captcha as an <img> fed by an XHR response; the
         // raw base64 only exists on the network layer, so capture it here.
@@ -387,15 +417,113 @@ public class OnlineBookingLoginPageStdHS {
         return !page.url().contains(LOGIN_ROUTE_HASH);
     }
 
+    // ---------- Post-login journey (steps 17-22) ----------
+
+    /** Waits until the given text is rendered somewhere on the page (throws on timeout). */
+    public void waitForText(String text, long timeoutMillis) {
+        page.getByText(text).first()
+                .waitFor(new Locator.WaitForOptions().setTimeout(timeoutMillis));
+    }
+
+    /** True when the given text is currently rendered on the page. */
+    public boolean isTextVisible(String text) {
+        return page.getByText(text).first().isVisible();
+    }
+
+    /** Navigates the SPA to the given hash-route URL (the React app re-renders). */
+    public OnlineBookingLoginPageStdHS openRoute(String url) {
+        page.navigate(url, new Page.NavigateOptions()
+                .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+        return this;
+    }
+
+    /** Navigates to the given hash-route URL and waits for its marker text. */
+    public OnlineBookingLoginPageStdHS openRouteAndWaitFor(String url, String markerText) {
+        openRoute(url);
+        waitForText(markerText, 20_000);
+        return this;
+    }
+
+    /** Waits until at least one image is visible on the page (throws on timeout). */
+    public void waitForAnyImage(long timeoutMillis) {
+        page.locator("img:visible").first()
+                .waitFor(new Locator.WaitForOptions().setTimeout(timeoutMillis));
+    }
+
+    /** True when the browser is on the given hash route (ignoring a trailing slash). */
+    public boolean isOnRoute(String route) {
+        String url = page.url();
+        String hash = url.contains("#") ? url.substring(url.indexOf('#') + 1) : "";
+        if (hash.endsWith("/")) {
+            hash = hash.substring(0, hash.length() - 1);
+        }
+        return hash.equalsIgnoreCase(route);
+    }
+
+    /** Records one journey check; throws (failing the run/test) when it does not hold. */
+    private static void journeyCheck(String what, boolean ok) {
+        if (!ok) {
+            throw new IllegalStateException("Journey check failed: " + what);
+        }
+        System.out.println("[JOURNEY] ok: " + what);
+    }
+
+    /**
+     * Runs the StdHS post-login journey (steps 17-22) and throws
+     * {@link IllegalStateException} on the first failed step:
+     *
+     *  17. Health Message (spa-wsmash/health) — an image is shown
+     *  18. View Health Assessment Findings and Recommendations — page accessed
+     *  19. What's New — iAM Smart notice shown, press "Next" → back on
+     *      Health Message with an image
+     *  20. Appointment home (#/StdHS) — reschedule footnote shown
+     *  21. Change Personal Email (/changeProfile) — heading shown
+     *  22. Change Password (/changePassword) — heading shown
+     */
+    public void postLoginJourney() {
+        openRoute(HEALTH_URL);
+        waitForAnyImage(20_000);
+        journeyCheck("step 17: health page shows an image (URL: " + page.url() + ")",
+                isOnRoute("/StdHS/spa/spa-wsmash/health"));
+
+        openRoute(FINDING_AND_RECOMMENDATION_URL);
+        journeyCheck("step 18: findings page accessed (URL: " + page.url()
+                + ")", isOnRoute("/StdHS/spa/spa-wsmash/findingAndRecommendation"));
+
+        openRoute(LATEST_NEWS_URL);
+        waitForText(LATEST_NEWS_MARKER_TEXT_1, 20_000);
+        waitForText(LATEST_NEWS_MARKER_TEXT_2, 20_000);
+        journeyCheck("step 19: what's-new shows the iAM Smart notice (URL: " + page.url()
+                + ")", isOnRoute("/StdHS/latestNews"));
+        nextButton.click();
+        page.waitForURL(url -> url.toString().contains("#/StdHS/spa/spa-wsmash/health"),
+                new Page.WaitForURLOptions().setTimeout(20_000));
+        waitForAnyImage(20_000);
+        journeyCheck("step 19b: \"Next\" leads back to the health page with an image (URL: "
+                + page.url() + ")", isOnRoute("/StdHS/spa/spa-wsmash/health"));
+
+        openRouteAndWaitFor(HOME_URL, APPT_FOOTNOTE_MARKER_TEXT);
+        journeyCheck("step 20: appointment home shows the reschedule footnote (URL: "
+                + page.url() + ")", isOnRoute("/StdHS"));
+
+        openRouteAndWaitFor(CHANGE_PROFILE_URL, CHANGE_PROFILE_MARKER_TEXT);
+        journeyCheck("step 21: change-profile page shows its heading (URL: "
+                + page.url() + ")", isOnRoute("/StdHS/changeProfile"));
+
+        openRouteAndWaitFor(CHANGE_PASSWORD_URL, CHANGE_PASSWORD_MARKER_TEXT);
+        journeyCheck("step 22: change-password page shows its heading (URL: "
+                + page.url() + ")", isOnRoute("/StdHS/changePassword"));
+    }
+
     // ---------- Standalone local runner ----------
 
     /**
-     * Local smoke run — LOGIN-ONLY, no JUnit required. Launches Chromium,
-     * opens the service-selection root route ({@code #/login}), selects
-     * "Student Health Service", logs in with a real account (captcha solved
-     * via {@link #solveCurrentCaptcha(long)}, retrying like
-     * {@code OnlineBookingOcrLoginTest}) and confirms the SPA left the
-     * StdHS login route.
+     * Local smoke run of the StdHS login + journey — no JUnit required.
+     * Launches Chromium, opens the service-selection root route
+     * ({@code #/login}), selects "Student Health Service", logs in with a
+     * real account (captcha solved via {@link #solveCurrentCaptcha(long)},
+     * retrying like {@code OnlineBookingOcrLoginTest}), then walks the StdHS
+     * pages (steps 17-22, see {@link #postLoginJourney()}).
      *
      * Credentials (never hard-code secrets): -Dob.login=... -Dob.password=...
      * or STDHS_LOGIN / STDHS_PASSWORD env vars; the run aborts when they are
@@ -508,11 +636,14 @@ public class OnlineBookingLoginPageStdHS {
                 check("login accepted (maxAttempts=" + maxAttempts
                         + (failure == null ? "" : "; " + failure) + ")", accepted);
 
-                // Login-only: confirm we are off the login route and report
-                // where the SPA landed.
                 check("left the StdHS login route", loginPage.hasLeftLoginPage());
-                System.out.println("[SMOKE] OK — StdHS login-only passed, now at: "
-                        + loginPage.currentUrl());
+
+                // ---- Post-login journey: steps 17-22 ----
+                loginPage.postLoginJourney();
+
+                System.out.println("[SMOKE] OK — StdHS journey passed: login → health (image)"
+                        + " → findings & recommendations (accessed) → what's new (Next → health)"
+                        + " → appointment home → change profile → change password");
             } finally {
                 context.close();
                 browser.close();
