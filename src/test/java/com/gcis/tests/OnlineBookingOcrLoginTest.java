@@ -11,7 +11,10 @@ import org.junit.jupiter.api.Timeout;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Full automated login against the Online Booking SPA.
+ * Full automated login against the Online Booking SPA, followed by the
+ * post-login journey (English walk → Traditional Chinese walk → Simplified
+ * Chinese walk → logout; see
+ * {@link OnlineBookingLoginPage#postLoginJourney()}).
  *
  * The captcha is solved with OCR (macOS Vision or tesseract — see
  * {@link com.gcis.support.CaptchaOcr}). By default up to 5 captcha attempts
@@ -22,6 +25,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * (never hard-code secrets):
  *   -Dob.login=...  -Dob.password=...   or   OB_LOGIN / OB_PASSWORD env vars
  * When credentials are absent the test is skipped.
+ *
+ * Typical run (see run.ps1): .\run.ps1 ocr -H -S
  */
 class OnlineBookingOcrLoginTest extends TestBase {
 
@@ -43,8 +48,8 @@ class OnlineBookingOcrLoginTest extends TestBase {
     }
 
     @Test
-    @DisplayName("OCR-solved captcha lets a valid user log in")
-    @Timeout(value = 300)
+    @DisplayName("OCR-solved captcha lets a valid user log in, then walk the FHS-CH journey")
+    @Timeout(value = 600)
     void loginWithOcrCaptcha() throws InterruptedException {
         String login = firstNonBlank(System.getProperty("ob.login"), System.getenv("OB_LOGIN"));
         String password = firstNonBlank(System.getProperty("ob.password"), System.getenv("OB_PASSWORD"));
@@ -144,5 +149,11 @@ class OnlineBookingOcrLoginTest extends TestBase {
                 + "; last answer: " + lastCaptcha + ", last respCode: " + lastRespCode
                 + ", last errMsg: " + lastErrMsg + ")");
         System.out.println("LOGIN OK, now at: " + loginPage.currentUrl());
+
+        // Post-login journey: English walk (steps 1-5), Traditional Chinese
+        // walk (steps 6-10), Simplified Chinese walk (steps 11-15), logout
+        // (step 16). Throws IllegalStateException (failing this test) on the
+        // first step whose marker/route is wrong.
+        loginPage.postLoginJourney();
     }
 }

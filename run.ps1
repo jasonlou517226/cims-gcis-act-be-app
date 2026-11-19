@@ -4,7 +4,7 @@
 # Usage:
 #   .\run.ps1                     # default = booking (OnlineBookingLoginPage smoke x1 + OCR auto login)
 #   .\run.ps1 booking             # OnlineBookingLoginPage standalone main() smoke (x1) + OCR captcha auto login
-#   .\run.ps1 ocr                 # run OnlineBookingOcrLoginTest only (OCR captcha auto login)
+#   .\run.ps1 ocr             # run OnlineBookingOcrLoginTest (OCR captcha auto login + post-login journey)
 #   .\run.ps1 portal              # run LoginTest (School Portal, 4 methods)
 #   .\run.ps1 all                 # run all test classes (LoginTest + OnlineBookingOcrLoginTest)
 #   .\run.ps1 'portal#loginWithValidCredentials'  # run a single test method (quote the #)
@@ -155,7 +155,7 @@ switch -Regex ($Target) {
         exit $LASTEXITCODE
     }
     '^ocr$' {
-        Write-Host 'Running OnlineBookingOcrLoginTest (OCR captcha auto login)...'
+        Write-Host 'Running OnlineBookingOcrLoginTest (OCR captcha auto login + post-login journey)...'
         & $MVN -B test @Opts @Cred '-Dtest=OnlineBookingOcrLoginTest'
         exit $LASTEXITCODE
     }
