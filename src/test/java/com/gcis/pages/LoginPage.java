@@ -1,19 +1,29 @@
 package com.gcis.pages;
 
+import com.microsoft.playwright.Browser;
+import com.microsoft.playwright.BrowserContext;
+import com.microsoft.playwright.BrowserType;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
+import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.PlaywrightException;
 import com.microsoft.playwright.options.LoadState;
 import com.microsoft.playwright.options.WaitUntilState;
 
+import java.util.List;
+
 /**
  * Page Object for the School Portal login page.
  *
- * Target page: https://www1.dhsisp.gov.hk/SchoolPortalWeb/login.htm
+ * Target page: https://testing.dhsisp.gov.hk/SchoolPortalWeb/login.htm
  */
 public class LoginPage {
 
-    public static final String URL = "https://www1.dhsisp.gov.hk/SchoolPortalWeb/login.htm";
+    public static final String URL = "https://testing.dhsisp.gov.hk/SchoolPortalWeb/login.htm";
+
+    /** "Upload Student List" page (requires an authenticated session). */
+    public static final String UPLOAD_STUDENT_LIST_URL =
+            "https://testing.dhsisp.gov.hk/SchoolPortalTrust/upload.htm?sel=upload";
 
     private final Page page;
 
@@ -84,6 +94,47 @@ public class LoginPage {
         }
     }
 
+    // ---------- Login → Upload Student List journey ----------
+
+    /** Waits until the browser has left the public login page (SchoolPortalWeb/login*). */
+    public boolean waitForLoginSuccess(long timeoutMs) {
+        try {
+            page.waitForURL(url -> !url.contains("SchoolPortalWeb/login"),
+                    new Page.WaitForURLOptions().setTimeout(timeoutMs));
+            return true;
+        } catch (PlaywrightException timeout) {
+            return false;
+        }
+    }
+
+    /** Opens the "Upload Student List" page directly (needs an active session). */
+    public LoginPage openUploadStudentList() {
+        page.navigate(UPLOAD_STUDENT_LIST_URL,
+                new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+        return this;
+    }
+
+    public boolean isOnUploadStudentListPage() {
+        return page.url().contains("SchoolPortalTrust/upload.htm");
+    }
+
+    /**
+     * Full journey: login at SchoolPortalWeb/login.htm, confirm the session
+     * conflict dialog if shown, wait for the authenticated redirect, then
+     * navigate to the "Upload Student List" page (SchoolPortalTrust/upload.htm).
+     *
+     * @return true when we end up on the Upload Student List page
+     */
+    public boolean loginAndOpenUploadStudentList(String username, String password, long timeoutMs) {
+        loginAs(username, password);
+        confirmSessionConflictIfPresent();
+        if (!waitForLoginSuccess(timeoutMs)) {
+            return false;
+        }
+        openUploadStudentList();
+        return isOnUploadStudentListPage();
+    }
+
     // ---------- Assertions helpers ----------
 
     public String currentPageTitle() {
@@ -108,5 +159,92 @@ public class LoginPage {
 
     public Locator submitButton() {
         return submitButton;
+    }
+
+    // ---------- Standalone local runner ----------
+
+    /**
+     * Local smoke run: login → Upload Student List — no JUnit required.
+     * Launches Chromium, opens SchoolPortalWeb/login.htm, logs in with the
+     * test account, handles the session-conflict dialog, waits for the
+     * authenticated redirect, then navigates to the "Upload Student List"
+     * page (SchoolPortalTrust/upload.htm?sel=upload).
+     *
+     * Credentials (env vars override the built-in test account):
+     *   -Dtest.username=... -Dtest.password=... or TEST_USERNAME / TEST_PASSWORD.
+     *
+     * Run with Maven exec (test scope includes this class):
+     *   mvn test-compile exec:java -Dexec.mainClass=com.gcis.pages.LoginPage -Dexec.classpathScope=test
+     * or simply run main() from the IDE. Flags mirror TestBase:
+     *   -Dheaded=true (fullscreen browser), -Dslowmo=true, -Dslowmo.ms=N.
+     * Exits 0 when every check passes, 1 otherwise.
+     */
+    public static void main(String[] args) {
+        boolean headless = !"true".equalsIgnoreCase(System.getProperty("headed", "false"));
+        boolean slowMo = "true".equalsIgnoreCase(System.getProperty("slowmo", "false"));
+
+        String login = cred("TEST_USERNAME", "JASON_LOU1");
+        String password = cred("TEST_PASSWORD", "Sira!!2118");
+
+        try (Playwright playwright = Playwright.create()) {
+            BrowserType.LaunchOptions options = new BrowserType.LaunchOptions().setHeadless(headless);
+            if (slowMo) {
+                options.setSlowMo(Integer.getInteger("slowmo.ms", 2_000));
+            }
+            if (!headless) {
+                // Watch mode: open the browser window in full screen for easy viewing.
+                options.setArgs(List.of("--start-fullscreen"));
+            }
+            Browser browser = playwright.chromium().launch(options);
+            // Government site with self-signed/odd certificates; ignore HTTPS errors.
+            BrowserContext context = browser.newContext(
+                    new Browser.NewContextOptions().setIgnoreHTTPSErrors(true));
+            Page page = context.newPage();
+            page.setDefaultTimeout(30_000);
+
+            try {
+                LoginPage loginPage = new LoginPage(page);
+                loginPage.open();
+                check("login form is visible", loginPage.isLoginFormVisible());
+
+                // ---- Login ----
+                loginPage.loginAs(login, password);
+                loginPage.confirmSessionConflictIfPresent();
+                boolean loggedIn = loginPage.waitForLoginSuccess(60_000);
+                check("login accepted (left SchoolPortalWeb/login)", loggedIn);
+                System.out.println("[SMOKE] login OK. URL: " + loginPage.currentUrl());
+
+                // ---- Go to "Upload Student List" ----
+                loginPage.openUploadStudentList();
+                check("landed on Upload Student List page", loginPage.isOnUploadStudentListPage());
+                System.out.println("[SMOKE] upload page OK. URL: " + loginPage.currentUrl());
+                System.out.println("[SMOKE] upload page title: " + loginPage.currentPageTitle());
+
+                System.out.println("[SMOKE] OK — login → Upload Student List passed");
+            } finally {
+                context.close();
+                browser.close();
+            }
+        } catch (Exception e) {
+            System.out.println("[SMOKE] FAILED: " + e);
+            System.exit(1);
+        }
+    }
+
+    /** Reads a credential from a system property (test.username) or env var, falling back to the default. */
+    private static String cred(String name, String fallback) {
+        String v = System.getProperty(name.toLowerCase().replace('_', '.'));
+        if (v == null || v.isBlank()) {
+            v = System.getenv(name);
+        }
+        return (v == null || v.isBlank()) ? fallback : v;
+    }
+
+    /** Records one smoke check; throws (failing the run) when it does not hold. */
+    private static void check(String what, boolean holds) {
+        System.out.println((holds ? "[OK]   " : "[FAIL] ") + what);
+        if (!holds) {
+            throw new IllegalStateException("check failed: " + what);
+        }
     }
 }

@@ -8,6 +8,7 @@
 #   .\run.ps1 stdhs               # OnlineBookingLoginPageStdHS standalone main() (Student Health Service journey)
 #   .\run.ps1 pdqa                # OnlineBookingLoginPagePDQA standalone main() (Families Clinics, login-only)
 #   .\run.ps1 portal              # run LoginTest (School Portal, 4 methods)
+#   .\run.ps1 upload              # LoginPage standalone main() (login → Upload Student List page)
 #   .\run.ps1 all                 # run all test classes (LoginTest + OnlineBookingOcrLoginTest)
 #   .\run.ps1 'portal#loginWithValidCredentials'  # run a single test method (quote the #)
 #   .\run.ps1 install             # install Playwright Chromium browser (run once before first test)
@@ -25,6 +26,10 @@
 # PDQA login credentials (target: pdqa):
 #   1. Environment variables PDQA_LOGIN / PDQA_PASSWORD
 #   2. Built-in Families Clinics test account when not set
+#
+# Portal / upload credentials (targets: portal, upload):
+#   1. Environment variables TEST_USERNAME / TEST_PASSWORD
+#   2. Built-in School Portal test account when not set
 #
 # Flags (can be combined with any target above):
 #   -H / -S      headed mode (fullscreen browser) / slow motion (2s per action)
@@ -108,6 +113,12 @@ Write-Host "JAVA_HOME: $Jdk"
 
 # ---------- Corporate Artifactory truststore (see README - Windows section) ----------
 $TrustStore = Join-Path $env:USERPROFILE '.m2\truststore.jks'
+# Idempotent: strip truststore flags added by earlier runs before appending one
+# clean copy. ($env:MAVEN_OPTS persists in the PowerShell session after this
+# script ends, so plain appending snowballs it run after run until the cmd.exe
+# 8191-char command-line limit is hit and java fails with a garbage main class.)
+$env:MAVEN_OPTS = (@($env:MAVEN_OPTS -split ' ') |
+    Where-Object { $_ -and $_ -notlike '-Djavax.net.ssl.trustStore*' }) -join ' '
 if (Test-Path $TrustStore) {
     $env:MAVEN_OPTS = (("$env:MAVEN_OPTS" + " -Djavax.net.ssl.trustStore=`"$TrustStore`" -Djavax.net.ssl.trustStorePassword=changeit").Trim())
     Write-Host "MAVEN_OPTS: $env:MAVEN_OPTS"
@@ -122,7 +133,7 @@ if (-not (Get-Command tesseract -ErrorAction SilentlyContinue)) {
 # ---------- Resolve flags ----------
 $Headed = if ($H) { 'true' } elseif ($NH) { 'false' } else { $null }
 $Slowmo = if ($S) { 'true' } elseif ($NS) { 'false' } else { $null }
-if ($Target -like 'portal*') {          # portal defaults to headed + slowmo for visual inspection
+if ($Target -like 'portal*' -or $Target -eq 'upload') {   # portal/upload default to headed + slowmo for visual inspection
     if (-not $Headed) { $Headed = 'true' }
     if (-not $Slowmo) { $Slowmo = 'true' }
 }
@@ -188,6 +199,13 @@ switch -Regex ($Target) {
         & $MVN -B test @Opts '-Dtest=LoginTest'
         exit $LASTEXITCODE
     }
+    '^upload$' {
+        Write-Host 'Running LoginPage standalone (School Portal login → Upload Student List page)...'
+        # Direct local run of the LoginPage main(): login at SchoolPortalWeb/login.htm →
+        # session-conflict confirm → navigate to SchoolPortalTrust/upload.htm?sel=upload.
+        & $MVN -B test-compile exec:java @Opts '-Dexec.mainClass=com.gcis.pages.LoginPage' '-Dexec.classpathScope=test'
+        exit $LASTEXITCODE
+    }
     '^ocr$' {
         Write-Host 'Running OnlineBookingOcrLoginTest (OCR captcha auto login + post-login journey)...'
         & $MVN -B test @Opts @Cred '-Dtest=OnlineBookingOcrLoginTest'
@@ -199,7 +217,7 @@ switch -Regex ($Target) {
         exit $LASTEXITCODE
     }
     default {
-        Write-Error "Unknown target: $Target (available: all | booking | ocr | stdhs | pdqa | portal | portal#method | install)"
+        Write-Error "Unknown target: $Target (available: all | booking | ocr | stdhs | pdqa | portal | upload | portal#method | install)"
         exit 1
     }
 }
