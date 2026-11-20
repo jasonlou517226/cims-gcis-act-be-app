@@ -44,7 +44,8 @@ import java.util.concurrent.TimeUnit;
  *   "Next" → back to Health Message) → Appointment home (reschedule
  *   footnote) → Change Personal Email → Change Password; then switches to
  *   Traditional Chinese ({@code btn_zh-HK}) and repeats the walk (steps
- *   23-28, 下一頁 / 更改個人電郵 / 更改密碼).
+ *   23-28, 下一頁 / 更改個人電郵 / 更改密碼), then to Simplified Chinese
+ *   ({@code btn_zh-CN}, steps 29-34, 下一页 / 更改个人电邮 / 更改密码).
  */
 public class OnlineBookingLoginPageStdHS {
 
@@ -82,6 +83,12 @@ public class OnlineBookingLoginPageStdHS {
             "改期只可選擇未來四星期內的日期。如需改期到稍後的日期，請稍後登入再試。";
     public static final String CHANGE_PROFILE_MARKER_TEXT_ZH = "更改個人電郵";
     public static final String CHANGE_PASSWORD_MARKER_TEXT_ZH = "更改密碼";
+
+    /** Simplified Chinese (zh-CN) marker texts for the same pages. */
+    public static final String APPT_FOOTNOTE_MARKER_TEXT_SC =
+            "改期只可选择未来四星期内的日期。如需改期到稍后的日期，请稍后登入再试";
+    public static final String CHANGE_PROFILE_MARKER_TEXT_SC = "更改个人电邮";
+    public static final String CHANGE_PASSWORD_MARKER_TEXT_SC = "更改密码";
     /** Backend API paths used by the SPA (matched against on-the-wire response URLs). */
     public static final String CAPTCHA_API = "/online-booking-user/generateCaptcha/image";
     public static final String LOGIN_API = "/online-booking-user/loginWithSam";
@@ -102,6 +109,8 @@ public class OnlineBookingLoginPageStdHS {
     private final Locator nextButton;
     private final Locator nextButtonZh;
     private final Locator zhLanguageButton;
+    private final Locator nextButtonSc;
+    private final Locator scLanguageButton;
 
     /** A captcha seen on the wire: the image payload plus the test-env answer. */
     private record Captcha(String imageBase64, String actAnswer) {
@@ -138,10 +147,13 @@ public class OnlineBookingLoginPageStdHS {
                 new Page.GetByRoleOptions().setName("Next").setExact(true)).first();
         this.nextButtonZh = page.getByRole(AriaRole.BUTTON,
                 new Page.GetByRoleOptions().setName("下一頁").setExact(true)).first();
+        this.nextButtonSc = page.getByRole(AriaRole.BUTTON,
+                new Page.GetByRoleOptions().setName("下一页").setExact(true)).first();
         // The SPA header renders one language button per supported language
         // with a stable id (btn_zh-HK / btn_zh-CN / btn_en); i18next swaps all
         // texts in place on click.
         this.zhLanguageButton = page.locator("#btn_zh-HK");
+        this.scLanguageButton = page.locator("#btn_zh-CN");
 
         // The SPA renders the captcha as an <img> fed by an XHR response; the
         // raw base64 only exists on the network layer, so capture it here.
@@ -478,6 +490,16 @@ public class OnlineBookingLoginPageStdHS {
         page.waitForTimeout(1_500);
     }
 
+    /**
+     * Switches the UI language to Simplified Chinese by clicking the header
+     * language button (stable id {@code btn_zh-CN}, label "简"). Same settle
+     * rationale as {@link #switchToTraditionalChinese()}.
+     */
+    public void switchToSimplifiedChinese() {
+        scLanguageButton.click();
+        page.waitForTimeout(1_500);
+    }
+
     /** True when the browser is on the given hash route (ignoring a trailing slash). */
     public boolean isOnRoute(String route) {
         String url = page.url();
@@ -516,6 +538,15 @@ public class OnlineBookingLoginPageStdHS {
      *  26. 預約時間 home (#/StdHS) — Chinese reschedule footnote shown
      *  27. 更改個人電郵 (/changeProfile) — heading shown
      *  28. 更改密碼 (/changePassword) — heading shown
+     *
+     *  Simplified Chinese part:
+     *  29. Switch to zh-CN on Health Message — image shown
+     *  30. 检视个人健康检查结果及建议 (findingAndRecommendation) — accessed
+     *  31. 最新消息 (latestNews) — press "下一页" → back on Health Message
+     *      with an image
+     *  32. 预约时间 home (#/StdHS) — Chinese reschedule footnote shown
+     *  33. 更改个人电邮 (/changeProfile) — heading shown
+     *  34. 更改密码 (/changePassword) — heading shown
      */
     public void postLoginJourney() {
         openRoute(HEALTH_URL);
@@ -581,6 +612,37 @@ public class OnlineBookingLoginPageStdHS {
         openRouteAndWaitFor(CHANGE_PASSWORD_URL, CHANGE_PASSWORD_MARKER_TEXT_ZH);
         journeyCheck("step 28: Chinese change-password page shows its heading (URL: "
                 + page.url() + ")", isOnRoute("/StdHS/changePassword"));
+
+        // ---- Simplified Chinese walk (steps 29-34) ----
+        openRoute(HEALTH_URL);
+        switchToSimplifiedChinese();
+        waitForAnyImage(20_000);
+        journeyCheck("step 29: health page in Simplified Chinese shows an image (URL: "
+                + page.url() + ")", isOnRoute("/StdHS/spa/spa-wsmash/health"));
+
+        openRoute(FINDING_AND_RECOMMENDATION_URL);
+        journeyCheck("step 30: Simplified Chinese findings page accessed (URL: " + page.url()
+                + ")", isOnRoute("/StdHS/spa/spa-wsmash/findingAndRecommendation"));
+
+        openRoute(LATEST_NEWS_URL);
+        nextButtonSc.click();
+        page.waitForURL(url -> url.toString().contains("#/StdHS/spa/spa-wsmash/health"),
+                new Page.WaitForURLOptions().setTimeout(20_000));
+        waitForAnyImage(20_000);
+        journeyCheck("step 31: \"下一页\" leads back to the health page with an image (URL: "
+                + page.url() + ")", isOnRoute("/StdHS/spa/spa-wsmash/health"));
+
+        openRouteAndWaitFor(HOME_URL, APPT_FOOTNOTE_MARKER_TEXT_SC);
+        journeyCheck("step 32: Simplified Chinese appointment home shows the reschedule"
+                + " footnote (URL: " + page.url() + ")", isOnRoute("/StdHS"));
+
+        openRouteAndWaitFor(CHANGE_PROFILE_URL, CHANGE_PROFILE_MARKER_TEXT_SC);
+        journeyCheck("step 33: Simplified Chinese change-profile page shows its heading (URL: "
+                + page.url() + ")", isOnRoute("/StdHS/changeProfile"));
+
+        openRouteAndWaitFor(CHANGE_PASSWORD_URL, CHANGE_PASSWORD_MARKER_TEXT_SC);
+        journeyCheck("step 34: Simplified Chinese change-password page shows its heading (URL: "
+                + page.url() + ")", isOnRoute("/StdHS/changePassword"));
     }
 
     // ---------- Standalone local runner ----------
@@ -591,8 +653,8 @@ public class OnlineBookingLoginPageStdHS {
      * ({@code #/login}), selects "Student Health Service", logs in with a
      * real account (captcha solved via {@link #solveCurrentCaptcha(long)},
      * retrying like {@code OnlineBookingOcrLoginTest}), then walks the StdHS
-     * pages in English (steps 17-22) and Traditional Chinese (steps 23-28,
-     * see {@link #postLoginJourney()}).
+     * pages in English (steps 17-22), Traditional Chinese (steps 23-28) and
+     * Simplified Chinese (steps 29-34, see {@link #postLoginJourney()}).
      *
      * Credentials (never hard-code secrets): -Dob.login=... -Dob.password=...
      * or STDHS_LOGIN / STDHS_PASSWORD env vars; the run aborts when they are
@@ -714,7 +776,9 @@ public class OnlineBookingLoginPageStdHS {
                         + " → findings & recommendations (accessed) → what's new (Next → health)"
                         + " → appointment home → change profile → change password"
                         + " → 繁體中文: health (image) → findings (accessed) → 最新消息 (下一頁 → health)"
-                        + " → 預約時間 → 更改個人電郵 → 更改密碼");
+                        + " → 預約時間 → 更改個人電郵 → 更改密碼"
+                        + " → 简体中文: health (image) → findings (accessed) → 最新消息 (下一页 → health)"
+                        + " → 预约时间 → 更改个人电邮 → 更改密码");
             } finally {
                 context.close();
                 browser.close();
