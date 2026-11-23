@@ -8,7 +8,7 @@
 #   .\run.ps1 stdhs               # OnlineBookingLoginPageStdHS standalone main() (Student Health Service journey)
 #   .\run.ps1 pdqa                # OnlineBookingLoginPagePDQA standalone main() (Families Clinics, login-only)
 #   .\run.ps1 portal              # run LoginTest (School Portal, 4 methods)
-#   .\run.ps1 upload              # LoginPage standalone main() (login → Upload Student List page)
+#   .\run.ps1 upload              # LoginPage standalone main() (login → Upload Student List → upload Excel → confirm → delete classes)
 #   .\run.ps1 all                 # run all test classes (LoginTest + OnlineBookingOcrLoginTest)
 #   .\run.ps1 'portal#loginWithValidCredentials'  # run a single test method (quote the #)
 #   .\run.ps1 install             # install Playwright Chromium browser (run once before first test)
@@ -30,6 +30,10 @@
 # Portal / upload credentials (targets: portal, upload):
 #   1. Environment variables TEST_USERNAME / TEST_PASSWORD
 #   2. Built-in School Portal test account when not set
+#
+# Upload Excel (target: upload) — bundled with the app:
+#   default: upload_excel\for_load_test2.xlsx (found relative to the project root,
+#   working-directory independent); override with env var UPLOAD_FILE
 #
 # Flags (can be combined with any target above):
 #   -H / -S      headed mode (fullscreen browser) / slow motion (2s per action)
@@ -200,10 +204,13 @@ switch -Regex ($Target) {
         exit $LASTEXITCODE
     }
     '^upload$' {
-        Write-Host 'Running LoginPage standalone (School Portal login → Upload Student List page)...'
+        Write-Host 'Running LoginPage standalone (School Portal login → Upload Student List → upload Excel → confirm → delete uploaded classes)...'
         # Direct local run of the LoginPage main(): login at SchoolPortalWeb/login.htm →
-        # session-conflict confirm → navigate to SchoolPortalTrust/upload.htm?sel=upload.
-        & $MVN -B test-compile exec:java @Opts '-Dexec.mainClass=com.gcis.pages.LoginPage' '-Dexec.classpathScope=test'
+        # session-conflict confirm → navigate to SchoolPortalTrust/upload.htm?sel=upload →
+        # declaration checkbox → 瀏覽 (pick Excel) → 上載 → declaration → 確認及儲存 →
+        # "Save Student List" Yes → delete classes under 已上載班別.
+        $UploadFile = if ($env:UPLOAD_FILE) { @("-Dupload.file=$env:UPLOAD_FILE") } else { @() }
+        & $MVN -B test-compile exec:java @Opts @UploadFile '-Dexec.mainClass=com.gcis.pages.LoginPage' '-Dexec.classpathScope=test'
         exit $LASTEXITCODE
     }
     '^ocr$' {

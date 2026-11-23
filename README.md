@@ -101,8 +101,9 @@ dhci2_auto_check/
 .\run.ps1 ocr                 # 只執行 OCR 全自動登入（Windows 用 Tesseract）
 .\run.ps1 portal              # LoginTest（預設有頭 + 慢速，方便觀察）
 .\run.ps1 portal -NH -NS      # LoginTest（無頭 + 正常速度）
-.\run.ps1 upload              # School Portal 登入 → Upload Student List 頁（預設有頭 + 慢速）
+.\run.ps1 upload              # School Portal：登入 → Upload Student List → 打鉤聲明 → 瀏覽選 Excel → 上載 → 打鉤聲明 → 確認及儲存 → pop-up 按 Yes → 刪除已上載班別（預設有頭 + 慢速）
 .\run.ps1 upload -NH -NS      # 同上（無頭 + 正常速度）
+$env:UPLOAD_FILE='D:\path\to\file.xlsx'; .\run.ps1 upload   # 自訂上載 Excel（預設用 app 內建 upload_excel\for_load_test2.xlsx，路徑與 working directory 無關）
 .\run.ps1 booking -H -S       # 全螢幕 + 慢速觀察
 .\run.ps1 'portal#loginWithValidCredentials'   # 單一測試方法（# 在 PowerShell 需加引號）
 .\run.ps1 install             # 安裝 Playwright Chromium 瀏覽器（首次執行前需做一次）
