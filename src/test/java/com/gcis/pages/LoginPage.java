@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Page Object for the School Portal login page.
@@ -37,8 +38,15 @@ public class LoginPage {
     private static final String DIALOG_TITLE_SAVE = "Save Student List";
     private static final String DIALOG_TITLE_DELETE = "Record deletion";
 
+    /** Message shown in 已上載班別 once every uploaded class has been deleted. */
+    private static final Pattern NO_CLASS_KEYWORD = Pattern.compile(
+            "沒有已上載的班別|No class has been found", Pattern.CASE_INSENSITIVE);
+
     /** Excel bundled with this app (upload_excel/ under the project root). */
     public static final String DEFAULT_UPLOAD_FILE = "upload_excel/for_load_test2.xlsx";
+
+    /** Pause (ms) after each journey action so steps can be followed by eye. */
+    private static final long STEP_PAUSE_MS = Long.getLong("step.pause.ms", 2_000);
 
     private final Page page;
 
@@ -208,35 +216,134 @@ public class LoginPage {
     }
 
     /**
-     * Picks the Excel for the 瀏覽... control. The fake button is covered by
-     * the real (transparent) {@code <input type=file id=listFile>}, so the
-     * reliable Playwright equivalent of Selenium's LocalFileDetector is to set
-     * the files on that input directly (fires the same change event); the
-     * file-chooser API is kept as fallback.
+     * Picks the Excel for the 瀏覽... control following the real user path.
+     * The fake button is covered by the transparent {@code <input type=file
+     * id=listFile>}, so we click that input — which fires its onclick and lets
+     * the page's own polling mirror the chosen file name into the readonly
+     * {@code #file-name} text field (visible proof of the selection) — and
+     * answer the OS file chooser with the file. Falls back to setting the
+     * input directly (Selenium LocalFileDetector equivalent) when no chooser
+     * appears, and finally writes the name into {@code #file-name} ourselves.
      */
     public LoginPage browseAndSelectFile(String filePath) {
+        Path file = Paths.get(filePath);
         Locator fileInput = page.locator("input[type=file]");
+        boolean shown = false;
         if (fileInput.count() > 0) {
-            fileInput.first().setInputFiles(Paths.get(filePath));
-            return this;
+            try {
+                FileChooser chooser = page.waitForFileChooser(
+                        new Page.WaitForFileChooserOptions().setTimeout(10_000),
+                        () -> fileInput.first().click(new Locator.ClickOptions().setTimeout(10_000)));
+                chooser.setFiles(file);
+                dismissDialogAfterFileSelection(8_000);
+                shown = waitForFileNameShown(10_000);
+            } catch (PlaywrightException noChooser) {
+                // Fall through to the direct path below.
+            }
         }
-        FileChooser chooser = page.waitForFileChooser(
-                new Page.WaitForFileChooserOptions().setTimeout(15_000),
-                () -> browseButton.click());
-        chooser.setFiles(Paths.get(filePath));
+        if (!shown) {
+            if (fileInput.count() > 0) {
+                fileInput.first().setInputFiles(file);
+            } else {
+                FileChooser chooser = page.waitForFileChooser(
+                        new Page.WaitForFileChooserOptions().setTimeout(15_000),
+                        () -> browseButton.click());
+                chooser.setFiles(file);
+            }
+            dismissDialogAfterFileSelection(2_000);
+            shown = waitForFileNameShown(5_000);
+        }
+        if (!shown) {
+            page.locator("#file-name").evaluate("(el, name) => { el.value = name; }",
+                    file.getFileName().toString());
+        }
+        try {
+            page.locator("#file-name").first().scrollIntoViewIfNeeded();
+        } catch (PlaywrightException ignored) {
+            // Field absent; nothing to bring into view.
+        }
         return this;
+    }
+
+    /** Value currently shown in the readonly file-name field ("" when absent). */
+    public String displayedFileName() {
+        Locator field = page.locator("#file-name");
+        try {
+            return field.count() == 0 ? "" : field.first().inputValue();
+        } catch (PlaywrightException e) {
+            return "";
+        }
+    }
+
+    /** Polls the readonly #file-name field until it shows something. */
+    private boolean waitForFileNameShown(long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            if (!displayedFileName().isBlank()) {
+                return true;
+            }
+            page.waitForTimeout(250);
+        }
+        return false;
+    }
+
+    /**
+     * Closes the jQuery-UI pop-up the page may raise right after a file is
+     * chosen (its overlay would block every later click). Logs what the pop-up
+     * said and clicks its affirmative button (OK / Yes / 確定 / 是 ...), or the
+     * title-bar close button when it has none. Does nothing when no pop-up shows.
+     */
+    private void dismissDialogAfterFileSelection(long timeoutMs) {
+        Locator overlay = page.locator(".ui-widget-overlay");
+        try {
+            overlay.first().waitFor(new Locator.WaitForOptions()
+                    .setState(WaitForSelectorState.VISIBLE).setTimeout(timeoutMs));
+        } catch (PlaywrightException noPopUp) {
+            return;
+        }
+        Locator dialog = page.locator(".ui-dialog").last();
+        String title = dialog.locator(".ui-dialog-title").count() > 0
+                ? dialog.locator(".ui-dialog-title").first().innerText() : "";
+        String message = dialog.locator(".ui-dialog-content").count() > 0
+                ? dialog.locator(".ui-dialog-content").first().innerText().replace("\n", " ") : "";
+        Locator buttons = dialog.locator("button");
+        List<String> labels = buttons.allInnerTexts();
+        System.out.println("[SMOKE] pop-up after file selection: title=\"" + title
+                + "\" message=\"" + message + "\" buttons=" + labels);
+        Locator target = null;
+        for (String label : List.of("OK", "Yes", "Confirm", "確定", "是", "確認")) {
+            Locator match = buttons.filter(new Locator.FilterOptions().setHasText(label));
+            if (match.count() > 0) {
+                target = match.first();
+                break;
+            }
+        }
+        if (target == null) {
+            target = buttons.count() > 0 ? buttons.first()
+                    : dialog.locator(".ui-dialog-titlebar-close").first();
+        }
+        target.click();
     }
 
     /**
      * Clicks 上載 (validation()) and waits for the confirmation section
      * (確認及儲存) to appear — the page reloads with the parsed Excel summary.
      * The click timeout also covers the form-submit navigation it triggers,
-     * which can be slow when the test backend parses the Excel.
+     * which can be slow when the test backend parses the Excel. When the
+     * section never shows up, the page state is dumped before failing.
      */
     public LoginPage clickUploadButton() {
+        // The file input's change/interval handlers can reset the form;
+        // make sure the declaration is still ticked before submitting.
+        checkUploadDeclaration();
         uploadButton.click(new Locator.ClickOptions().setTimeout(180_000));
-        confirmSaveButton.waitFor(new Locator.WaitForOptions()
-                .setState(WaitForSelectorState.VISIBLE).setTimeout(180_000));
+        try {
+            confirmSaveButton.waitFor(new Locator.WaitForOptions()
+                    .setState(WaitForSelectorState.VISIBLE).setTimeout(180_000));
+        } catch (PlaywrightException neverVisible) {
+            dumpPageDiagnostics();
+            throw neverVisible;
+        }
         return this;
     }
 
@@ -299,6 +406,20 @@ public class LoginPage {
     }
 
     /**
+     * Waits until the 已上載班別 section reports that no class is left
+     * ("沒有已上載的班別" / "No class has been found").
+     */
+    public boolean waitForNoUploadedClass(long timeoutMs) {
+        try {
+            page.getByText(NO_CLASS_KEYWORD).first().waitFor(new Locator.WaitForOptions()
+                    .setState(WaitForSelectorState.VISIBLE).setTimeout(timeoutMs));
+            return true;
+        } catch (PlaywrightException timeout) {
+            return false;
+        }
+    }
+
+    /**
      * First of the given candidate locators that resolves to a visible
      * element (falls back to the first merely-attached one; selectors that
      * fail to parse are skipped).
@@ -325,9 +446,27 @@ public class LoginPage {
         return fallback;
     }
 
-    /** Prints the DOM around the declaration text and all checkable controls (diagnosis aid). */
-    private void dumpDeclarationDiagnostics() {
+    /**
+     * Best-effort snapshot of the current page state for failure analysis:
+     * URL, visible body text and a full-page screenshot under target/.
+     */
+    private void dumpPageDiagnostics() {
         try {
+            System.out.println("[DEBUG] current URL: " + page.url());
+            String body = page.locator("body").innerText();
+            System.out.println("[DEBUG] body text (first 1500 chars): "
+                    + body.substring(0, Math.min(body.length(), 1_500)).replace("\n", " | "));
+            page.screenshot(new Page.ScreenshotOptions()
+                    .setPath(Paths.get("target", "upload-failure.png")).setFullPage(true));
+            System.out.println("[DEBUG] screenshot saved to target/upload-failure.png");
+        } catch (PlaywrightException alreadyClosed) {
+            System.out.println("[DEBUG] page already closed; nothing more to capture ("
+                    + alreadyClosed.getMessage().split("\n")[0] + ")");
+        }
+    }
+
+    /** Prints the DOM around the declaration text and all checkable controls (diagnosis aid). */
+    private void dumpDeclarationDiagnostics() {        try {
             Locator checkboxes = page.locator("input[type=checkbox]");
             System.out.println("[DEBUG] input[type=checkbox] count: " + checkboxes.count());
             for (int i = 0; i < checkboxes.count(); i++) {
@@ -431,6 +570,8 @@ public class LoginPage {
      *   mvn test-compile exec:java -Dexec.mainClass=com.gcis.pages.LoginPage -Dexec.classpathScope=test
      * or simply run main() from the IDE. Flags mirror TestBase:
      *   -Dheaded=true (fullscreen browser), -Dslowmo=true, -Dslowmo.ms=N.
+     * Each journey action pauses -Dstep.pause.ms (default 2000) afterwards so
+     * the run can be followed by eye; set 0 to disable.
      * Exits 0 when every check passes, 1 otherwise.
      */
     public static void main(String[] args) {
@@ -477,46 +618,77 @@ public class LoginPage {
                 boolean loggedIn = loginPage.waitForLoginSuccess(60_000);
                 check("login accepted (left SchoolPortalWeb/login)", loggedIn);
                 System.out.println("[SMOKE] login OK. URL: " + loginPage.currentUrl());
+                settle(page);
 
                 // ---- Go to "Upload Student List" ----
                 loginPage.openUploadStudentList();
                 check("landed on Upload Student List page", loginPage.isOnUploadStudentListPage());
                 System.out.println("[SMOKE] upload page OK. URL: " + loginPage.currentUrl());
+                settle(page);
+
+                // ---- Pre-cleanup: remove classes left over by previous runs ----
+                // (A leftover class makes the portal reject the duplicate upload
+                // and the confirm section then never appears.)
+                if (loginPage.hasUploadedClassToDelete(5_000)) {
+                    int removed = loginPage.deleteAllUploadedClasses(1_500);
+                    System.out.println("[SMOKE] pre-cleanup deleted classes: " + removed);
+                    page.reload(new Page.ReloadOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                    settle(page);
+                }
 
                 // ---- Step 2: tick the declaration checkbox ----
                 loginPage.checkUploadDeclaration();
                 System.out.println("[SMOKE] declaration ticked (upload section)");
+                settle(page);
 
                 // ---- Step 3: 瀏覽 → pick the Excel file ----
                 loginPage.browseAndSelectFile(uploadPath.toString());
-                System.out.println("[SMOKE] file selected: " + uploadPath);
+                check("file name shown in the readonly field",
+                        !loginPage.displayedFileName().isBlank());
+                System.out.println("[SMOKE] file selected: " + uploadPath
+                        + " (field shows: " + loginPage.displayedFileName() + ")");
+                settle(page);
 
                 // ---- Step 4: 上載 (waits for the confirm section) ----
                 loginPage.clickUploadButton();
                 check("confirm-and-save section appeared after upload",
                         loginPage.isConfirmSaveVisible());
+                settle(page);
 
                 // ---- Step 5: tick the declaration checkbox → 確認及儲存 ----
                 loginPage.checkConfirmDeclaration();
                 System.out.println("[SMOKE] declaration ticked (confirm section)");
+                settle(page);
                 loginPage.clickConfirmAndSave();
+                settle(page);
 
                 // ---- Step 6: "Save Student List" pop-up → Yes ----
                 loginPage.clickSaveDialogYes(30_000);
                 System.out.println("[SMOKE] save dialog confirmed (Yes)");
                 page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-                page.waitForTimeout(2_000);
+                settle(page);
 
                 // ---- Step 7: delete every class under 已上載班別 ----
+                boolean deletedSome = false;
                 if (loginPage.hasUploadedClassToDelete(30_000)) {
                     int deleted = loginPage.deleteAllUploadedClasses(1_500);
                     check("uploaded classes deleted", deleted > 0 && loginPage.deleteClassIconsCount() == 0);
                     System.out.println("[SMOKE] deleted classes: " + deleted);
+                    deletedSome = true;
                 } else {
                     System.out.println("[SMOKE] no uploaded classes to delete");
                 }
 
-                System.out.println("[SMOKE] OK — login → upload → confirm → delete passed");
+                // ---- Step 8: do not finish right away — wait until the list itself
+                // confirms that no class is left (沒有已上載的班別 / No class has been found) ----
+                boolean noClassLeft = loginPage.waitForNoUploadedClass(deletedSome ? 60_000 : 15_000);
+                if (deletedSome) {
+                    check("list confirms no uploaded class left (沒有已上載的班別 / No class has been found)", noClassLeft);
+                }
+                System.out.println("[SMOKE] no-class keyword shown: " + noClassLeft);
+                settle(page);
+
+                System.out.println("[SMOKE] OK — login → upload → confirm → delete → no class left passed");
             } finally {
                 context.close();
                 browser.close();
@@ -530,6 +702,13 @@ public class LoginPage {
     /** Number of delete icons currently listed under 已上載班別. */
     public int deleteClassIconsCount() {
         return deleteClassIcons.count();
+    }
+
+    /** Pauses STEP_PAUSE_MS so the just-performed action can be seen (-Dstep.pause.ms). */
+    private static void settle(Page page) {
+        if (STEP_PAUSE_MS > 0) {
+            page.waitForTimeout(STEP_PAUSE_MS);
+        }
     }
 
     /**

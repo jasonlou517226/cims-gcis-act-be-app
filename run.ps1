@@ -37,7 +37,8 @@
 #
 # Flags (can be combined with any target above):
 #   -H / -S      headed mode (fullscreen browser) / slow motion (2s per action)
-#   -NH / -NS    force headless / normal speed (portal defaults to headed + slowmo)
+#   -NH / -NS    force headless / normal speed (portal & upload default to headed + slowmo)
+#   Upload journey also pauses 2s after each step (-Dstep.pause.ms=N, 0 disables).
 #
 # Notes:
 #   - portal target defaults to HEADED + SLOWMO so the page can be inspected visually.
