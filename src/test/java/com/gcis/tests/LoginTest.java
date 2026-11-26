@@ -11,13 +11,13 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Automated tests for the School Portal login page:
- * https://www1.dhsisp.gov.hk/SchoolPortalWeb/login.htm
+ * https://testing.dhsisp.gov.hk/SchoolPortalWeb/login.htm
  */
 class LoginTest extends TestBase {
 
     /** Credentials: env vars TEST_USERNAME / TEST_PASSWORD override the built-in test account. */
-    private static final String VALID_USERNAME = cred("TEST_USERNAME", "ehr-test");
-    private static final String VALID_PASSWORD = cred("TEST_PASSWORD", "Sira!!2117");
+    private static final String VALID_USERNAME = cred("TEST_USERNAME", "JASON_LOU1");
+    private static final String VALID_PASSWORD = cred("TEST_PASSWORD", "Sira!!2118");
 
     /** Reads a credential from a system property (test.username) or env var, falling back to the default. */
     private static String cred(String name, String fallback) {
