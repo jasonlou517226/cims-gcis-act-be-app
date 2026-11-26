@@ -1,0 +1,190 @@
+# Scheduled Playwright smoke tests on AWS Lambda.
+#
+# Deployed with OSS-Serverless (`osls`, the Serverless Framework v3 fork):
+#   npm ci && npx osls deploy --stage dev --region ap-east-1
+#
+# Layout: one function, one target per invocation. EventBridge starts it once
+# per scheduled target with {"target": "..."}; each run uses the headless
+# Chromium provided by the "chromium" Lambda layer.
+
+service: ${self:custom.serviceName}
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  # Node.js 20.x cannot create new functions since 2026-06-01 (see HA upgrade guide).
+  runtime: nodejs22.x
+  region: ${env:AWS_REGION, 'ap-east-1'}
+  stage: ${env:STAGE, 'dev'}
+  # The Chromium layer carries x86_64 binaries only.
+  architecture: x86_64
+  # @sparticuz/chromium recommends at least 1600 MB; more memory also means more CPU.
+  memorySize: 2048
+  # Lambda's maximum. One target per invocation keeps every journey well inside it.
+  timeout: 900
+  logRetentionInDays: 30
+  environment:
+    STAGE: ${self:provider.stage}
+    # Nothing to watch inside Lambda: no pause after the upload steps.
+    STEP_PAUSE_MS: '0'
+    # Target used when the event carries none (e.g. `osls invoke -f smoke` without data).
+    DEFAULT_TARGET: ${self:custom.defaultTarget}
+  iam:
+    role:
+      statements:
+        # The function only reads its credentials; it needs no other AWS access.
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+          Resource:
+            Fn::Sub: '${self:custom.secretArnPrefix}-*'
+
+functions:
+  smoke:
+    # dist/handler.js is the esbuild bundle produced by "npm run build"
+    # (run automatically by "npm ci").
+    handler: dist/handler.run
+    # Chromium (~130 MB), its libraries and fonts are unpacked to /tmp on a cold start.
+    ephemeralStorageSize: 1024
+    layers:
+      - Ref: ChromiumLambdaLayer
+    events:
+      # AWS cron expressions are in UTC: 18:00 UTC is 02:00 in Hong Kong.
+      # Override every schedule at once with SMOKE_SCHEDULE.
+      - schedule:
+          name: ${self:custom.eventPrefix}-portal
+          description: School Portal login checks
+          rate: ${self:custom.schedule}
+          input:
+            target: portal
+      - schedule:
+          name: ${self:custom.eventPrefix}-booking
+          description: Online Booking — Child Health Service login and walk
+          rate: ${self:custom.schedule}
+          input:
+            target: booking
+      - schedule:
+          name: ${self:custom.eventPrefix}-stdhs
+          description: Online Booking — Student Health Service login and walk
+          rate: ${self:custom.schedule}
+          input:
+            target: stdhs
+      - schedule:
+          name: ${self:custom.eventPrefix}-pdqa
+          description: Online Booking — Families Clinics login
+          rate: ${self:custom.schedule}
+          input:
+            target: pdqa
+      # The upload journey writes to the portal (and cleans up afterwards), so
+      # it is not scheduled. Run it by hand when needed:
+      #   npx osls invoke -f smoke -d '{"target":"upload"}'
+      # or make it permanent by removing "enabled: false" below.
+      - schedule:
+          name: ${self:custom.eventPrefix}-upload
+          description: School Portal — Upload Student List journey
+          rate: ${self:custom.schedule}
+          enabled: false
+          input:
+            target: upload
+
+layers:
+  chromium:
+    name: ${self:service}-${self:provider.stage}-chromium
+    description: '@sparticuz/chromium 158.0.0 — headless Chromium for AWS Lambda'
+    licenseInfo: MIT
+    compatibleRuntimes:
+      - nodejs22.x
+    package:
+      # Built from the npm package by scripts/build-package-assets.mjs (npm ci).
+      artifact: build/chromium-layer.zip
+
+package:
+  patterns:
+    - '!**'
+    - dist/**
+    - node_modules/playwright-core/**
+    - build/upload_excel/**
+
+custom:
+  serviceName: ${env:SERVICE_NAME, 'cims-gcis-act-smoke'}
+  defaultTarget: ${env:DEFAULT_TARGET, 'portal'}
+  schedule: ${env:SMOKE_SCHEDULE, 'cron(0 18 * * ? *)'}
+  eventPrefix: ${self:service}-${self:provider.stage}
+  # Secrets Manager secret holding one JSON document with the eight keys below.
+  # If Lambda cannot resolve the JSON keys, set this to the full secret name
+  # including its random six-character suffix.
+  credentialsSecretName: ${env:CREDENTIALS_SECRET_NAME, 'cims/cims-gcis-act/smoke-credentials'}
+  # ARN prefix of that secret. The backslashes stop Serverless from parsing
+  # CloudFormation's ${AWS::...} placeholders as its own variables; the prefix
+  # is only ever used inside Fn::Sub, where CloudFormation fills them in.
+  secretArnPrefix: 'arn:\${AWS::Partition}:secretsmanager:\${AWS::Region}:\${AWS::AccountId}:secret:${self:custom.credentialsSecretName}'
+  # E-mail that receives the failure alarm; "disabled" creates no subscription.
+  alarmEmail: ${env:ALARM_EMAIL, 'disabled'}
+
+resources:
+  Conditions:
+    HasAlarmEmail: !Not
+      - !Equals
+          - ${self:custom.alarmEmail}
+          - disabled
+  Resources:
+    SmokeLambdaFunction:
+      Type: AWS::Lambda::Function
+      Properties:
+        Environment:
+          # Read by Lambda when the function starts, through the execution role:
+          # no credential value is ever part of the template or the package. A
+          # missing secret or key stops the function from starting at all.
+          Resources:
+            TEST_USERNAME:
+              Fn::Sub: '${self:custom.secretArnPrefix}:portal_username::'
+            TEST_PASSWORD:
+              Fn::Sub: '${self:custom.secretArnPrefix}:portal_password::'
+            OB_LOGIN:
+              Fn::Sub: '${self:custom.secretArnPrefix}:ob_login::'
+            OB_PASSWORD:
+              Fn::Sub: '${self:custom.secretArnPrefix}:ob_password::'
+            STDHS_LOGIN:
+              Fn::Sub: '${self:custom.secretArnPrefix}:stdhs_login::'
+            STDHS_PASSWORD:
+              Fn::Sub: '${self:custom.secretArnPrefix}:stdhs_password::'
+            PDQA_LOGIN:
+              Fn::Sub: '${self:custom.secretArnPrefix}:pdqa_login::'
+            PDQA_PASSWORD:
+              Fn::Sub: '${self:custom.secretArnPrefix}:pdqa_password::'
+
+    # A failed target rejects the handler, which shows up as a Lambda Errors
+    # metric: alarm on it and notify by e-mail (when ALARM_EMAIL is set).
+    SmokeFailureTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-${self:provider.stage}-smoke-failures
+        DisplayName: Smoke test failures (${self:service} ${self:provider.stage})
+    SmokeFailureSubscription:
+      Type: AWS::SNS::Subscription
+      Condition: HasAlarmEmail
+      Properties:
+        Protocol: email
+        TopicArn: !Ref SmokeFailureTopic
+        Endpoint: ${self:custom.alarmEmail}
+    SmokeFailureAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Condition: HasAlarmEmail
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-smoke-failures
+        AlarmDescription: A smoke test target failed on Lambda (Errors > 0)
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: !Ref SmokeLambdaFunction
+        Statistic: Sum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref SmokeFailureTopic
+        OKActions:
+          - !Ref SmokeFailureTopic

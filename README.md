@@ -2,6 +2,8 @@
 
 以 **Java + Playwright + JUnit 5** 建立的網站自動化測試專案（依據 [Playwright for Java 官方文件](https://playwright.dev/java/docs/intro)）。
 
+> **AWS Lambda 版本**：同一套測試已移植到 Node.js，以 `@sparticuz/chromium` Lambda Layer 在 AWS Lambda 上排程執行，位於 **`nodejs` 分支** 的 [`lambda/`](lambda/README.md)。Java 版保留供本機使用；兩者使用不同的本機瀏覽器目錄，互不影響。
+
 ## 測試目標
 
 ### 1. School Portal（傳統 JSP 網站）

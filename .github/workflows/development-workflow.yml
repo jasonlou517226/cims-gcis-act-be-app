@@ -1,0 +1,127 @@
+# Development workflow — adapted from
+#   CDRA/workflow-template-serverless/.github/workflows/development-workflow.yml
+# (reference only — that repository is not modified).
+#
+# ScanCode (SonarQube) is commented out in the reference template as well.
+#
+# Create Environment in Repository > Settings > Environments, and the
+# environment secrets in Repository > Settings > Secrets and variables:
+#
+# ** DEV Environment ** — secrets:
+#   AWS_ACCESS_KEY_ID
+#   AWS_SECRET_ACCESS_KEY
+#   ARTIFACTORY_USER_DEV, ARTIFACTORY_PASSWORD_DEV, CERT_HA_ROOT_CA
+#   OSS_ANALYSER_USER_DEV, OSS_ANALYSER_PASSWORD_DEV, SAST_TOKEN_PRD
+#   API_KEY_LOGSTASH_SIT
+# — variables:
+#   AWS_REGION, NODE_VERSION (22), ARTIFACTORY_URL, OSS_ANALYSER_URL_DEV,
+#   SAST_URL_PRD, APP_NAME, RUNS_ON, PRODUCT, MODULE
+#
+# The scan jobs call the CDRA reusable workflows: they exist on HA's Public
+# GHES (hagithub.ha.org.hk), not on github.com. The scan tools are downloaded
+# from the internal Artifactory, so a runner without access to it fails there;
+# `skip_scans` (manual runs only, off by default) lets the deployment run
+# without them — use it only with the cloud team's approval.
+
+name: Development workflow
+
+on:
+  push:
+    branches: ['feature**', 'hotfix**', 'bugfix**', 'cht**', nodejs]
+  workflow_dispatch:
+    inputs:
+      skip_scans:
+        description: Deploy without the OSS / SAST scans (needs the cloud team's approval)
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-dev-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ScanCode:
+  #   name: Scan code
+  #   uses: CDRA/workflow-template-serverless/.github/workflows/scan-code-workflow.yml@release
+  #   with:
+  #     CODE_ANALYSER_URL: ${{ vars.CODE_ANALYSER_URL_PRD }}
+  #     ARTIFACTORY_URL: ${{ vars.ARTIFACTORY_URL }}
+  #     REPO_TYPE: ${{ vars.REPO_TYPE_DEV }}
+  #     PRODUCT: ${{ vars.PRODUCT }}
+  #     MODULE: ${{ vars.MODULE }}
+  #     PROJECT_KEY: ${{ vars.PROJECT_KEY }}
+  #     NODE_VERSION: ${{ vars.NODE_VERSION }}
+  #   secrets:
+  #     CODE_ANALYSER_TOKEN: ${{ secrets.CODE_ANALYSER_TOKEN_PRD }}
+  #     CERT_HA_ROOT_CA: ${{ secrets.CERT_HA_ROOT_CA }}
+  #     ARTIFACTORY_USER: ${{ secrets.ARTIFACTORY_USER_DEV }}
+  #     ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_PASSWORD_DEV }}
+
+  ScanOSS:
+    if: ${{ !inputs.skip_scans }}
+    name: Scan OSS Libraries
+    # needs: ScanCode
+    uses: CDRA/workflow-template-serverless/.github/workflows/scan-oss-workflow.yml@release
+    with:
+      OSS_ANALYSER_URL: ${{ vars.OSS_ANALYSER_URL_DEV }}
+      NODE_VERSION: ${{ vars.NODE_VERSION }}
+      ARTIFACTORY_URL: ${{ vars.ARTIFACTORY_URL }}
+      STAGE: 'develop'
+    secrets:
+      OSS_ANALYSER_USER: ${{ secrets.OSS_ANALYSER_USER_DEV }}
+      OSS_ANALYSER_PASSWORD: ${{ secrets.OSS_ANALYSER_PASSWORD_DEV }}
+      ARTIFACTORY_USER: ${{ secrets.ARTIFACTORY_USER_DEV }}
+      ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_PASSWORD_DEV }}
+      CERT_HA_ROOT_CA: ${{ secrets.CERT_HA_ROOT_CA }}
+
+  ScanCodeSecurity:
+    if: ${{ !inputs.skip_scans }}
+    name: Scan code security
+    needs: ScanOSS
+    uses: CDRA/workflow-template-serverless/.github/workflows/scan-code-security-workflow.yml@release
+    with:
+      SAST_URL: ${{ vars.SAST_URL_PRD }}
+      # NODE_VERSION: ${{ vars.NODE_VERSION }}
+      ARTIFACTORY_URL: ${{ vars.ARTIFACTORY_URL }}
+      APP_NAME: ${{ vars.APP_NAME }}
+    secrets:
+      ARTIFACTORY_USER: ${{ secrets.ARTIFACTORY_USER_DEV }}
+      ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_PASSWORD_DEV }}
+      # CERT_HA_ROOT_CA: ${{ secrets.CERT_HA_ROOT_CA }}
+      SAST_TOKEN: ${{ secrets.SAST_TOKEN_PRD }}
+
+  deploy-dev:
+    # Runs when the scans passed — or were skipped on purpose; never when one failed.
+    needs: [ScanOSS, ScanCodeSecurity]
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
+    uses: ./.github/workflows/deploy-sls-workflow.yml
+    with:
+      stage: 'dev'
+      environment: 'DEV'
+      region: ${{ vars.AWS_REGION }}
+      node_version: ${{ vars.NODE_VERSION || '22' }}
+      # sts_enabled: true                                             # <<< Enable this if using AWS STS for temporary credentials, for pre-PRD & PRD environments
+    secrets:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      # AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}           # <<< Optional STS for temporary credentials, for pre-PRD & PRD environments
+      # AWS_ROLE_SESSION_NAME: ${{ secrets.AWS_ROLE_SESSION_NAME }}   # <<< Optional STS for temporary credentials, for pre-PRD & PRD environments
+      # AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}                     # <<< Optional STS for temporary credentials, for pre-PRD & PRD environments
+
+  SendLog:
+    name: Send log to Dashboard
+    needs: [deploy-dev]
+    if: ${{ always() && contains(fromJSON('["success","failure"]'), needs.deploy-dev.result) }}
+    uses: CDRA/workflow-template-serverless/.github/workflows/send-log-workflow.yml@release
+    with:
+      RUNS_ON: ${{ vars.RUNS_ON }}
+      ENVIRONMENT: DEV
+      PRODUCT: ${{ vars.PRODUCT }}
+      MODULE: ${{ vars.MODULE }}
+      DEPLOYMENT_STATUS: ${{ !contains(needs.*.result, 'failure') }}
+    secrets:
+      API_KEY_LOGSTASH_SIT: ${{ secrets.API_KEY_LOGSTASH_SIT }}

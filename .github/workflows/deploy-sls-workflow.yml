@@ -1,0 +1,123 @@
+# Deploy the Lambda service with OSS-Serverless (`osls`, the Serverless
+# Framework v3 fork).
+#
+# Local counterpart of
+#   CDRA/workflow-template-serverless/.github/workflows/deploy-sls-workflow.yml
+# (reference only — that repository is not modified). It keeps the same
+# inputs, secrets and steps; the one difference is that the Node project
+# lives in lambda/, so every step runs there.
+#
+# The Node project on GitHub is the `nodejs` branch of this repository.
+
+name: Deploy serverless
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        description: Serverless application environment (dev, sit, aat, uat, lpt, devqa, pps, ppm, prod)
+        type: string
+        required: true
+      environment:
+        description: GitHub repository environment holding the AWS secrets
+        type: string
+        required: true
+      region:
+        description: AWS region of the Serverless application
+        type: string
+        required: true
+      node_version:
+        description: Node.js version the project needs (22 or later)
+        type: string
+        required: true
+      sts_enabled:
+        description: Enable STS-based deployment and require the additional STS secrets
+        type: boolean
+        required: false
+        default: false
+      runner:
+        description: GitHub Actions runner label to use
+        type: string
+        required: false
+        default: cdra-eks-runner
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      AWS_SESSION_TOKEN:
+        required: false
+      AWS_ROLE_SESSION_NAME:
+        required: false
+      AWS_ROLE_ARN:
+        required: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: lambda
+
+jobs:
+  deploy-aws-sls:
+    name: AWS SLS
+    runs-on: ${{ inputs.runner }}
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup nodejs
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: NPM Continuous Integration
+        # Also runs the `prepare` script: builds the Chromium layer zip and
+        # the esbuild bundle that serverless.yml packages.
+        run: npm ci
+
+      - name: Validate and configure optional AWS STS secrets
+        if: ${{ inputs.sts_enabled }}
+        shell: bash
+        env:
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+          AWS_ROLE_SESSION_NAME: ${{ secrets.AWS_ROLE_SESSION_NAME }}
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+        run: |
+          if [ -z "$AWS_SESSION_TOKEN" ] || [ -z "$AWS_ROLE_SESSION_NAME" ] || [ -z "$AWS_ROLE_ARN" ]; then
+            echo "::error title=Incomplete AWS STS secrets::sts_enabled is true, Missed one or more of AWS_SESSION_TOKEN, AWS_ROLE_SESSION_NAME, and AWS_ROLE_ARN"
+            exit 1
+          fi
+
+          echo "AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN" >> "$GITHUB_ENV"
+          echo "AWS_ROLE_SESSION_NAME=$AWS_ROLE_SESSION_NAME" >> "$GITHUB_ENV"
+          echo "AWS_ROLE_ARN=$AWS_ROLE_ARN" >> "$GITHUB_ENV"
+
+      - name: Run sls deploy
+        run: |
+          npx osls deploy --stage ${{ inputs.stage }} --region ${{ inputs.region }} --verbose | tee output.file && cat output.file | sed -n '/^functions:$/,${p;/^layers:$/q}' | sed '1d;$d' | awk '{print $2}' > functions.txt
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ inputs.region }}
+
+      - name: Print 'serverless deploy' output log file
+        run: cat output.file
+
+      - name: Check Serverless deploy result
+        run: |
+          ServerlessError=`grep "failed to deploy\|Error:\|Serverless Error" output.file | wc -l || true`
+          if [ $ServerlessError -ge 1 ]; then
+            echo "Error"
+            exit 1
+          else
+            echo "Success"
+          fi
+
+      - name: List Lambda functions
+        id: lambdafunction
+        run: |
+          cat functions.txt

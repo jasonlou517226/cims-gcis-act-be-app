@@ -1,0 +1,12 @@
+# Dependencies and generated output
+node_modules/
+build/
+.serverless/
+dist/
+.browsers/
+
+# Local configuration (holds credentials)
+.env
+
+*.log
+.DS_Store

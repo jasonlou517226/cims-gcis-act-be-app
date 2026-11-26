@@ -1,0 +1,68 @@
+# Run one smoke-test target on the deployed Lambda, on demand — for the
+# targets that are not scheduled (the `upload` journey) or to re-run one
+# right after a fix. The job fails when the target fails, and the target's
+# own log lines (every check, the summary) appear in the job log.
+
+name: Run smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Target to run
+        type: choice
+        required: true
+        default: upload
+        options:
+          - upload
+          - portal
+          - booking
+          - stdhs
+          - pdqa
+      stage:
+        description: Serverless stage that was deployed
+        type: string
+        required: false
+        default: dev
+
+permissions:
+  contents: read
+
+jobs:
+  invoke:
+    name: "Run: ${{ inputs.target }}"
+    runs-on: ${{ vars.RUNS_ON || 'cdra-eks-runner' }}
+    environment: DEV
+    defaults:
+      run:
+        working-directory: lambda
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup nodejs
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ vars.NODE_VERSION || '22' }}
+
+      - name: NPM Continuous Integration
+        run: npm ci
+
+      - name: Invoke the function
+        # Synchronous invocation: the CLI waits for the journey and streams its log.
+        run: |
+          npx osls invoke --stage ${{ inputs.stage }} --region ${{ vars.AWS_REGION }} \
+            --function smoke --log --type RequestResponse \
+            --data '{"target":"${{ inputs.target }}'}' | tee invoke.log
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+
+      - name: Check the result
+        run: |
+          if grep -q '"status": *"FAIL"\|SmokeTestFailure\|"Function Error"' invoke.log; then
+            echo "::error title=Smoke test failed::target ${{ inputs.target }} failed — see the summary above"
+            exit 1
+          fi
+          echo "Smoke test passed"
